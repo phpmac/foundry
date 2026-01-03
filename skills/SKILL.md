@@ -59,6 +59,8 @@ contract MyContract {
 - 必须包含`setUp()`函数
 - 测试函数前缀: `test_` (标准) 或 `testFuzz_` (模糊测试)
 - 使用forge-std断言函数
+- **分离测试关注点**: 将签名验证、业务逻辑等不同功能分开测试
+- **Fork测试**: 测试已部署合约时,在`setUp()`中验证合约地址存在性
 
 #### 测试模板
 
@@ -120,6 +122,70 @@ forge test --gas-report
 
 # 测试覆盖率
 forge coverage
+```
+
+#### Fork测试 (测试已部署的合约)
+
+当需要测试主网或测试网上已部署的合约时,使用Fork测试:
+
+```solidity
+function setUp() public {
+    // Fork主网或测试网
+    vm.createSelectFork("https://mainnet.optimism.io");
+    
+    // 检查合约是否存在
+    address contractAddr = 0x...;
+    uint256 codeSize;
+    assembly {
+        codeSize := extcodesize(contractAddr)
+    }
+    require(codeSize > 0, "Contract does not exist");
+    
+    // 使用已部署的合约地址
+    myContract = MyContract(contractAddr);
+}
+```
+
+**Fork测试最佳实践**:
+- 在测试文件头部提供清晰的运行命令说明
+- 分离不同的测试功能 (如签名验证和业务逻辑测试)
+- 使用`--match-test`运行特定测试函数
+- 在`setUp()`中验证合约地址是否存在
+
+**示例测试文件结构**:
+```solidity
+/**
+ * 运行命令:
+ *
+ * 测试签名恢复:
+ * forge test --match-test test_RecoverSigner -vvv
+ *
+ * 测试业务逻辑:
+ * forge test --match-test test_Withdrawal -vvv
+ *
+ * 运行所有测试:
+ * forge test -vvv
+ */
+
+contract MyContractTest is Test {
+    function setUp() public {
+        vm.createSelectFork("https://mainnet.optimism.io");
+        // ... 初始化
+    }
+    
+    // 分离的测试函数 - 只测试签名验证
+    function test_RecoverSigner() public view {
+        // 验证签名恢复逻辑
+        address recovered = recoverSigner(...);
+        assertEq(recovered, contract.expectedSigner());
+    }
+    
+    // 分离的测试函数 - 只测试业务逻辑
+    function test_Withdrawal() public {
+        vm.prank(user);
+        contract.withdrawal(...);
+    }
+}
 ```
 
 #### 代码格式化
@@ -259,6 +325,9 @@ fuzz_runs = 256
 - 使用`-vvv`或`-vvvv`查看详细输出
 - 检查`setUp()`函数是否正确初始化
 - 验证断言条件是否正确
+- Fork测试时检查合约地址是否存在
+- 验证Chain ID是否正确 (主网=1, Optimism=10, BSC=56等)
+- 检查签名验证时Chain ID是否匹配
 
 ### Gas优化
 
