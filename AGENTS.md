@@ -152,6 +152,7 @@ chisel
 ## 调试技巧
 
 - 使用`console.log`进行调试 (需要导入`forge-std/console.sol`)
+- **使用中文日志需加 unicode 前缀**: `console.log(unicode"中文内容")`
 - 使用`forge test -vvvv`查看详细的调用栈
 - 使用`forge debug <test_name>`进入交互式调试器
 - 检查`foundry.toml`配置文件确保设置正确
