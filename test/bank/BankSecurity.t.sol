@@ -65,11 +65,7 @@ contract BankSecurityTest is Test {
      */
     function test_ReentrancyAttack() public {
         console.log(unicode"=== 攻击开始 ===");
-        console.log(
-            unicode"Bank 初始余额:",
-            address(bank).balance / 1 ether,
-            "ETH"
-        );
+        console.log(unicode"Bank 初始余额:", address(bank).balance / 1 ether, "ETH");
 
         // 1. 给攻击者准备 1 ETH 本金
         vm.deal(address(attacker), 1 ether);
@@ -80,16 +76,8 @@ contract BankSecurityTest is Test {
         attacker.attack{value: 1 ether}();
 
         console.log(unicode"=== 攻击结束 ===");
-        console.log(
-            unicode"Bank 剩余余额:",
-            address(bank).balance / 1 ether,
-            "ETH"
-        );
-        console.log(
-            unicode"攻击者最终余额:",
-            address(attacker).balance / 1 ether,
-            "ETH"
-        );
+        console.log(unicode"Bank 剩余余额:", address(bank).balance / 1 ether, "ETH");
+        console.log(unicode"攻击者最终余额:", address(attacker).balance / 1 ether, "ETH");
 
         // 验证: 银行被掏空 (余额 < 初始存款)
         assertLt(address(bank).balance, 10 ether);

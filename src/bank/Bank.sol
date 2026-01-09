@@ -31,7 +31,7 @@ contract Bank {
         require(balances[msg.sender] >= amount, "Insufficient balance");
 
         // ! 漏洞: 经典重入漏洞（reentrancy）
-        (bool sent, ) = msg.sender.call{value: amount}("");
+        (bool sent,) = msg.sender.call{value: amount}("");
         require(sent, "Transfer failed");
 
         // 演示用: 使用 unchecked 绕过 Solidity 0.8+ 的溢出检查
@@ -54,7 +54,7 @@ contract Bank {
         balances[msg.sender] -= amount;
 
         // 3. Interactions
-        (bool sent, ) = msg.sender.call{value: amount}("");
+        (bool sent,) = msg.sender.call{value: amount}("");
         require(sent, "Transfer failed");
     }
 }
