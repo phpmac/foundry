@@ -50,10 +50,7 @@ contract OverflowAttackTest is Test {
     }
 
     /// @notice 外部函数用于测试revert
-    function unsafeCalculation(
-        uint256 amount,
-        uint256 reserve
-    ) external pure returns (uint256) {
+    function unsafeCalculation(uint256 amount, uint256 reserve) external pure returns (uint256) {
         // 没有unchecked,0.8+会自动检查溢出
         return 100 * amount * amount * reserve;
     }
