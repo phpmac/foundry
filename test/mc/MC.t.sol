@@ -257,7 +257,8 @@ contract MCTest is Test {
         uint256 tax2UsdtBefore = usdt.balanceOf(taxWallet2);
         uint256 tax3UsdtBefore = usdt.balanceOf(taxWallet3);
         uint256 deadBefore = mc.balanceOf(DEAD);
-        uint256 pairBefore = mc.balanceOf(pair);
+        uint256 pairMcBefore = mc.balanceOf(pair);
+        uint256 pairUsdtBefore = usdt.balanceOf(pair);
 
         console.log(unicode"=== 测试2: 通过swap卖出MC ===");
         console.log(unicode"卖出前 MC余额:", mcBefore / 1e18);
@@ -273,24 +274,28 @@ contract MCTest is Test {
         bool success = _doSwap(sellAmount, path, alice);
         require(success, "Swap failed");
 
-        // 触发税收分发
-        distributor.distributeTax();
+        // 注意: distributeTax() 现在会自动调用,无需手动调用
+        // distributor.distributeTax();
 
         _logPrice(unicode"卖出后价格");
 
         // 显示余额变化
         console.log(unicode"卖出后 MC余额:", mc.balanceOf(alice) / 1e18);
         console.log(unicode"卖出后 USDT余额:", usdt.balanceOf(alice) / 1e18);
-        console.log(unicode"实际卖出MC:", sellAmount / 1e18);
         console.log(unicode"实际收到USDT:", (usdt.balanceOf(alice) - usdtBefore) / 1e18);
 
         // 税收分配 - 钱包收到的是USDT
-        console.log(unicode"卖出MC数量:", sellAmount / 1e18);
         console.log(unicode"钱包1 USDT收入:", (usdt.balanceOf(taxWallet1) - tax1UsdtBefore) / 1e18);
         console.log(unicode"钱包2 USDT收入:", (usdt.balanceOf(taxWallet2) - tax2UsdtBefore) / 1e18);
         console.log(unicode"钱包3 USDT收入:", (usdt.balanceOf(taxWallet3) - tax3UsdtBefore) / 1e18);
         console.log(unicode"黑洞 (3%):", (mc.balanceOf(DEAD) - deadBefore) / 1e18);
-        console.log(unicode"交易对收到:", (mc.balanceOf(pair) - pairBefore) / 1e18);
+        console.log(unicode"Pair MC变化:", (mc.balanceOf(pair) - pairMcBefore) / 1e18);
+
+        // USDT 变化可能是负数（给用户）
+        int256 usdtChange = int256(usdt.balanceOf(pair)) - int256(pairUsdtBefore);
+        console.log(unicode"Pair USDT变化:", usdtChange / 1e18);
+        console.log(unicode"Pair USDT前:", pairUsdtBefore / 1e18);
+        console.log(unicode"Pair USDT后:", usdt.balanceOf(pair) / 1e18);
 
         // 验证: 钱包不收到MC,而是收到USDT
         assertEq(mc.balanceOf(taxWallet1), tax1McBefore, unicode"钱包1不应收到MC");
@@ -301,7 +306,7 @@ contract MCTest is Test {
         assertGt(usdt.balanceOf(taxWallet3), tax3UsdtBefore, unicode"钱包3应收到USDT");
         assertEq(mc.balanceOf(DEAD) - deadBefore, 300 ether);
         // Pair 收到 Alice 的 9000 MC + TaxDistributor swap 进来的 700 MC = 9700 MC
-        assertEq(mc.balanceOf(pair) - pairBefore, 9700 ether);
+        assertEq(mc.balanceOf(pair) - pairMcBefore, 9700 ether);
 
         console.log(unicode"✓ 卖出手续费自动换成USDT");
     }
@@ -380,11 +385,11 @@ contract MCTest is Test {
         uint256 pairReceived = mc.balanceOf(pair) - pairBefore;
 
         // 达到阈值后: 0%黑洞, 7%转发到TaxDistributor
-        // pair收到的 = 1000 - 70 = 930, TaxDistributor收到 70
+        // pair 的 MC 余额变化 = Alice 卖出的 930 MC + TaxDistributor swap 进来的 70 MC = 1000 MC
         assertEq(tax1Received, 0); // 钱包不直接收到MC
         assertEq(deadReceived, 0); // 不再销毁
-        assertEq(distributorReceived, 70 ether); // TaxDistributor收到7%
-        assertEq(pairReceived, 930 ether); // 税率降为7%
+        assertEq(distributorReceived, 0); // 自动调用后 TaxDistributor 不持有 MC
+        assertEq(pairReceived, 1000 ether); // Alice 的 930 + TaxDistributor 的 70
         console.log(unicode"✓ 达到阈值后停止销毁,税率降为7%");
     }
 

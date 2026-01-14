@@ -5,6 +5,7 @@ import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "./interfaces/IPancakeRouter.sol";
 import "./interfaces/IPancakeFactory.sol";
+import "./interfaces/ITaxDistributor.sol";
 
 /**
  * @title MC Token
@@ -49,6 +50,9 @@ contract MC is ERC20, Ownable {
 
     // USDT地址 (BSC主网固定)
     address public constant USDT = 0x55d398326f99059fF775485246999027B3197955;
+
+    // 防止 swap 重入锁
+    bool private _inSwap;
 
     // ========== 事件 ==========
 
@@ -221,7 +225,7 @@ contract MC is ERC20, Ownable {
 
     /**
      * @dev 应用卖出税
-     * 流程: 1.税收MC转发到分发合约 2.3%进黑洞 3.返回实际转账金额
+     * 流程: 1.税收MC转发到分发合约 2.自动调用distributeTax() swap 3.3%进黑洞 4.返回实际转账金额
      */
     function _applySellTax(
         address from,
@@ -240,6 +244,14 @@ contract MC is ERC20, Ownable {
             if (distributeTaxEnabled && taxDistributor != address(0)) {
                 // 转发到分发合约
                 super._update(from, taxDistributor, totalTaxMc);
+
+                // 2. 自动调用 distributeTax() 进行 swap 分发
+                // 使用 try/catch 确保 swap 失败不影响用户转账
+                if (!_inSwap) {
+                    _inSwap = true;
+                    try ITaxDistributor(taxDistributor).distributeTax() {} catch {}
+                    _inSwap = false;
+                }
             } else {
                 // 直接发给钱包
                 if (mcForWallet1 > 0) {
@@ -254,7 +266,7 @@ contract MC is ERC20, Ownable {
             }
         }
 
-        // 2. 黑洞销毁 (检查是否达到阈值)
+        // 3. 黑洞销毁 (检查是否达到阈值)
         if (!_checkBurnThreshold()) {
             super._update(from, DEAD, burnAmount);
             // 未达到阈值，税率10%
