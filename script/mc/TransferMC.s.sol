@@ -30,6 +30,7 @@ contract TransferMCScript is Script {
         // 查询 owner 余额
         uint256 balanceBefore = mc.balanceOf(OWNER);
         console.log("Owner MC balance:", balanceBefore / 1e18);
+        require(balanceBefore > 0, "Owner MC balance is 0");
 
         // 转账全部余额
         vm.startBroadcast(ownerPrivateKey);
