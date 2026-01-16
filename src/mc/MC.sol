@@ -39,6 +39,9 @@ contract MC is ERC20, Ownable {
     // 白名单
     mapping(address => bool) public isWhitelisted;
 
+    // 黑名单
+    mapping(address => bool) public isBlacklisted;
+
     // 是否为交易对 (swap相关)
     mapping(address => bool) public isPair;
 
@@ -58,6 +61,7 @@ contract MC is ERC20, Ownable {
 
     event TradingEnabled(bool enabled);
     event WhitelistUpdated(address indexed account, bool status);
+    event BlacklistUpdated(address indexed account, bool status);
     event PairCreated(address indexed pair, address indexed router);
     event PairUpdated(address indexed pair, bool status);
     event TaxWalletsUpdated(address wallet1, address wallet2, address wallet3);
@@ -114,6 +118,27 @@ contract MC is ERC20, Ownable {
         for (uint256 i = 0; i < accounts.length; i++) {
             isWhitelisted[accounts[i]] = status;
             emit WhitelistUpdated(accounts[i], status);
+        }
+    }
+
+    /**
+     * @dev 设置黑名单
+     */
+    function setBlacklist(address account, bool status) external onlyOwner {
+        isBlacklisted[account] = status;
+        emit BlacklistUpdated(account, status);
+    }
+
+    /**
+     * @dev 批量设置黑名单
+     */
+    function setBlacklistBatch(
+        address[] calldata accounts,
+        bool status
+    ) external onlyOwner {
+        for (uint256 i = 0; i < accounts.length; i++) {
+            isBlacklisted[accounts[i]] = status;
+            emit BlacklistUpdated(accounts[i], status);
         }
     }
 
@@ -286,18 +311,21 @@ contract MC is ERC20, Ownable {
         address to,
         uint256 amount
     ) internal override {
-        // 检查交易开关
-        if (!tradingEnabled) {
-            // owner和合约本身总是可以交易
-            // 白名单用户可以交易
+        // 黑名单检查: 黑名单用户不能进行任何转账
+        require(
+            !isBlacklisted[from] && !isBlacklisted[to],
+            "Blacklisted"
+        );
+
+        // 买入限制: 交易开关关闭时只有白名单可以买
+        // 买入判断: isPair[from] = true (从交易对转出代币给用户)
+        if (isPair[from]) {
             require(
-                from == owner() ||
-                    to == owner() ||
-                    from == address(this) ||
-                    to == address(this) ||
-                    isWhitelisted[from] ||
-                    isWhitelisted[to],
-                "Trading not enabled"
+                tradingEnabled || // 交易开启, 任何人可以买
+                    isWhitelisted[to] || // 或接收者在白名单
+                    to == owner() || // 或是owner
+                    to == address(this), // 或是合约本身
+                "Buy not allowed"
             );
         }
 

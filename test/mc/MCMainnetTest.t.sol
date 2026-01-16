@@ -18,14 +18,17 @@ contract MCMainnetTest is Test {
     TaxDistributor public distributor;
 
     // BSC 主网地址
-    address constant PANCAKE_ROUTER = 0x10ED43C718714eb63d5aA57B78B54704E256024E;
-    address constant PANCAKE_FACTORY = 0xcA143Ce32Fe78f1f7019d7d551a6402fC5350c73;
+    address constant PANCAKE_ROUTER =
+        0x10ED43C718714eb63d5aA57B78B54704E256024E;
+    address constant PANCAKE_FACTORY =
+        0xcA143Ce32Fe78f1f7019d7d551a6402fC5350c73;
     address constant USDT = 0x55d398326f99059fF775485246999027B3197955;
     address constant WBNB = 0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c;
 
     // 部署的合约地址
-    address constant MC_ADDRESS = 0x01e2FddC7A7499D9d888ccac239Ce9Fb13a7133D;
-    address constant DISTRIBUTOR_ADDRESS = 0xFAbeb03D83A34C15Bf185B85616ffEdF73Ee6aBa;
+    address constant MC_ADDRESS = 0xcD0c229a02a9fBCbb6a19347a48d004c46d7e4d1;
+    address constant DISTRIBUTOR_ADDRESS =
+        0x0c7d5a9A13828d0F6cEc06FBb60c1351842afb62;
 
     // 测试钱包
     address public owner = 0x20F7acfc15a4EB3142F6d1DdFb219a660541484e;
@@ -112,7 +115,11 @@ contract MCMainnetTest is Test {
         console.log(unicode"用户 USDT 余额 (添加后):", userUsdtAfter / 1e18);
 
         assertEq(userMcBefore - userMcAfter, mcAmount, unicode"MC 扣除不正确");
-        assertEq(userUsdtBefore - userUsdtAfter, usdtAmount, unicode"USDT 扣除不正确");
+        assertEq(
+            userUsdtBefore - userUsdtAfter,
+            usdtAmount,
+            unicode"USDT 扣除不正确"
+        );
         console.log(unicode"✓ 添加流动性成功");
     }
 
@@ -144,7 +151,11 @@ contract MCMainnetTest is Test {
         _doSellSwap(sellAmount, user);
 
         // 验证 MC 消耗和销毁
-        assertEq(userMcBefore - mc.balanceOf(user), sellAmount, unicode"用户应花费全部 MC");
+        assertEq(
+            userMcBefore - mc.balanceOf(user),
+            sellAmount,
+            unicode"用户应花费全部 MC"
+        );
 
         uint256 burned = mc.balanceOf(dead) - deadBefore;
         assertEq(burned, (sellAmount * 300) / 10000, unicode"黑洞应得 3%");
@@ -178,8 +189,8 @@ contract MCMainnetTest is Test {
         IPancakeRouter(PANCAKE_ROUTER).addLiquidity(
             MC_ADDRESS,
             USDT,
-            100_000 ether,  // MC
-            100 ether,       // USDT
+            100_000 ether, // MC
+            100 ether, // USDT
             0,
             0,
             owner,
@@ -193,10 +204,13 @@ contract MCMainnetTest is Test {
     /**
      * @dev 内部函数: 执行 swap 卖出
      */
-    function _doSellSwap(uint256 amountIn, address recipient) internal returns (bool success) {
+    function _doSellSwap(
+        uint256 amountIn,
+        address recipient
+    ) internal returns (bool success) {
         address[] memory path = new address[](2);
-        path[0] = MC_ADDRESS;  // MC
-        path[1] = USDT;         // USDT
+        path[0] = MC_ADDRESS; // MC
+        path[1] = USDT; // USDT
 
         (success, ) = PANCAKE_ROUTER.call(
             abi.encodeWithSignature(
@@ -214,7 +228,8 @@ contract MCMainnetTest is Test {
      * @dev 内部函数: 验证交易对流动性
      */
     function _checkPairLiquidity() internal view returns (bool) {
-        (uint112 reserve0, uint112 reserve1, ) = IPancakePair(pair).getReserves();
+        (uint112 reserve0, uint112 reserve1, ) = IPancakePair(pair)
+            .getReserves();
         return reserve0 > 0 && reserve1 > 0;
     }
 
@@ -225,7 +240,9 @@ contract MCMainnetTest is Test {
         console.log(unicode"\n=== 测试销毁阈值检查 ===");
 
         // 查看当前 DEAD 余额
-        uint256 deadBalance = mc.balanceOf(0x000000000000000000000000000000000000dEaD);
+        uint256 deadBalance = mc.balanceOf(
+            0x000000000000000000000000000000000000dEaD
+        );
         uint256 threshold = 12_000_000 ether;
         console.log(unicode"黑洞余额:", deadBalance / 1e18);
         console.log(unicode"销毁阈值:", threshold / 1e18);
@@ -282,7 +299,8 @@ contract MCMainnetTest is Test {
 
             uint256 deadAfter = mc.balanceOf(dead);
             uint256 burned = deadAfter - deadBefore;
-            uint256 usdtReceived = IERC20(USDT).balanceOf(user) - userUsdtBefore;
+            uint256 usdtReceived = IERC20(USDT).balanceOf(user) -
+                userUsdtBefore;
 
             console.log(unicode"第", i, unicode"次卖出:");
             console.log(unicode"  销毁数量:", burned / 1e18);

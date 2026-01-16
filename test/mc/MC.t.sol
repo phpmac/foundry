@@ -393,20 +393,20 @@ contract MCTest is Test {
         console.log(unicode"✓ 达到阈值后停止销毁,税率降为7%");
     }
 
-    // ========== 测试5: 交易开关 ==========
+    // ========== 测试5: 交易开关（买入限制） ==========
 
     function test_TradingToggle() public {
-        console.log(unicode"=== 测试5: 交易开关 ===");
+        console.log(unicode"=== 测试5: 交易开关（买入限制） ===");
 
-        // 交易关闭时不能swap
+        // 交易关闭时, 非白名单不能买入
         vm.prank(alice);
-        mc.approve(ROUTER, type(uint256).max);
+        usdt.approve(ROUTER, type(uint256).max);
 
         address[] memory path = new address[](2);
-        path[0] = address(mc);
-        path[1] = USDT_ADDR;
+        path[0] = USDT_ADDR;
+        path[1] = address(mc);
 
-        // 低级 call 返回 false 而不是 revert
+        // 非白名单买入应该失败
         vm.prank(alice);
         (bool success, ) = ROUTER.call(
             abi.encodeWithSignature(
@@ -418,17 +418,28 @@ contract MCTest is Test {
                 block.timestamp
             )
         );
-        assertEq(success, false, "Swap should fail when trading is disabled");
+        assertEq(success, false, unicode"交易关闭时非白名单不能买入");
+
+        // 添加白名单
+        mc.setWhitelist(alice, true);
+
+        // 白名单可以买入
+        vm.prank(alice);
+        success = _doSwap(100 ether, path, alice);
+        require(success, unicode"白名单应该可以买入");
+
+        // 移除白名单
+        mc.setWhitelist(alice, false);
 
         // 开启交易
         mc.setTradingEnabled(true);
 
-        // 现在可以swap
+        // 交易开启后任何人都可以买入
         vm.prank(alice);
         success = _doSwap(100 ether, path, alice);
-        require(success, "Swap failed");
+        require(success, unicode"交易开启后任何人都可以买入");
 
-        console.log(unicode"✓ 交易开关功能正常");
+        console.log(unicode"✓ 买入限制功能正常");
     }
 
     // ========== 测试6: 基本转账功能 ==========
@@ -469,5 +480,76 @@ contract MCTest is Test {
         assertEq(bobAfter - bobBefore, transferAmount, "Bob balance should increase");
 
         console.log(unicode"✓ 基本转账功能正常");
+    }
+
+    // ========== 测试7: 黑名单功能 ==========
+
+    function test_Blacklist() public {
+        mc.setTradingEnabled(true);
+
+        console.log(unicode"=== 测试7: 黑名单功能 ===");
+
+        // 1. 黑名单用户不能转账
+        mc.setBlacklist(alice, true);
+
+        vm.prank(alice);
+        vm.expectRevert("Blacklisted");
+        mc.transfer(bob, 100 ether);
+
+        console.log(unicode"✓ 黑名单用户不能转账");
+
+        // 2. 黑名单用户不能买入
+        vm.prank(alice);
+        usdt.approve(ROUTER, type(uint256).max);
+
+        address[] memory path = new address[](2);
+        path[0] = USDT_ADDR;
+        path[1] = address(mc);
+
+        vm.prank(alice);
+        (bool success, ) = ROUTER.call(
+            abi.encodeWithSignature(
+                "swapExactTokensForTokensSupportingFeeOnTransferTokens(uint256,uint256,address[],address,uint256)",
+                100 ether,
+                0,
+                path,
+                alice,
+                block.timestamp
+            )
+        );
+        assertEq(success, false, unicode"黑名单用户不能买入");
+
+        console.log(unicode"✓ 黑名单用户不能买入");
+
+        // 3. 黑名单用户不能卖出
+        vm.prank(alice);
+        mc.approve(ROUTER, type(uint256).max);
+
+        address[] memory sellPath = new address[](2);
+        sellPath[0] = address(mc);
+        sellPath[1] = USDT_ADDR;
+
+        vm.prank(alice);
+        (success, ) = ROUTER.call(
+            abi.encodeWithSignature(
+                "swapExactTokensForTokensSupportingFeeOnTransferTokens(uint256,uint256,address[],address,uint256)",
+                100 ether,
+                0,
+                sellPath,
+                alice,
+                block.timestamp
+            )
+        );
+        assertEq(success, false, unicode"黑名单用户不能卖出");
+
+        console.log(unicode"✓ 黑名单用户不能卖出");
+
+        // 4. 移除黑名单后恢复正常
+        mc.setBlacklist(alice, false);
+
+        vm.prank(alice);
+        mc.transfer(bob, 100 ether);
+
+        console.log(unicode"✓ 移除黑名单后恢复正常");
     }
 }
