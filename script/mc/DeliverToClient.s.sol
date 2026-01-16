@@ -68,6 +68,19 @@ contract DeliverToClientScript is Script {
             console.log(unicode"Owner 余额为0, 跳过转账");
         }
 
+        // 3. 开启交易
+        // 交易开启状态
+        bool tradingEnabled = mc.tradingEnabled();
+        if (!tradingEnabled) {
+            console.log(unicode"开启交易...");
+            vm.startBroadcast(ownerPrivateKey);
+            mc.setTradingEnabled(true);
+            vm.stopBroadcast();
+            console.log(unicode"✓ 交易开启");
+        } else {
+            console.log(unicode"交易已开启, 跳过开启");
+        }
+
         console.log(unicode"=== 交接流程完成 ===");
     }
 }
