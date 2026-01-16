@@ -5,6 +5,7 @@ import {Script} from "forge-std/Script.sol";
 import {console} from "forge-std/console.sol";
 import {MC} from "../../src/mc/MC.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {IPancakeRouter} from "../../src/mc/interfaces/IPancakeRouter.sol";
 
 /**
  * 主网模拟卖出测试
@@ -24,7 +25,7 @@ contract SellScript is Script {
         vm.selectFork(forkId);
 
         // 指定卖家地址
-        address seller = 0x130151AFa86CD285223f95BBc1e5Aa99eef8B7F2;
+        address seller = 0x1C3314831ff9a25178a4F179237a8cfA56A2cb6A;
 
         MC mc = MC(MC_ADDRESS);
         IERC20 usdt = IERC20(USDT);
@@ -39,36 +40,68 @@ contract SellScript is Script {
 
         // 记录初始状态
         uint256 mcBefore = mc.balanceOf(seller);
-        uint256 deadBefore = mc.balanceOf(DEAD);
+        require(mcBefore >= sellAmount, "MC balance is not enough");
+        uint256 deadBalance = mc.balanceOf(DEAD);
+        uint256 usdtBefore = usdt.balanceOf(seller);
 
-        // 模拟卖出 (使用 prank)
-        vm.startPrank(seller);
-        mc.approve(ROUTER, type(uint256).max);
-
+        // 使用 getAmountsOut 计算预期输出
         address[] memory path = new address[](2);
         path[0] = MC_ADDRESS;
         path[1] = USDT;
 
-        ROUTER.call(
-            abi.encodeWithSignature(
-                "swapExactTokensForTokensSupportingFeeOnTransferTokens(uint256,uint256,address[],address,uint256)",
-                sellAmount,
-                0,
-                path,
-                seller,
-                block.timestamp + 3600
-            )
+        uint256[] memory amounts = IPancakeRouter(ROUTER).getAmountsOut(
+            sellAmount,
+            path
         );
+        uint256 expectedOutput = amounts[1];
+
+        // 12% 滑点: 最少输出 = 预期输出 * 88%
+        uint256 amountOutMin = (expectedOutput * 88) / 100;
+
+        console.log(unicode"预期输出 USDT: ", expectedOutput);
+        console.log(unicode"最小输出 (12%滑点): ", amountOutMin);
+
+        // 执行卖出
+        vm.startPrank(seller);
+        mc.approve(ROUTER, type(uint256).max);
+        {
+            (bool success, ) = ROUTER.call(
+                abi.encodeWithSignature(
+                    "swapExactTokensForTokensSupportingFeeOnTransferTokens(uint256,uint256,address[],address,uint256)",
+                    sellAmount,
+                    amountOutMin,
+                    path,
+                    seller,
+                    block.timestamp + 3600
+                )
+            );
+            require(success, unicode"交易失败");
+        }
         vm.stopPrank();
 
-        // 结果
-        uint256 mcSpent = mcBefore - mc.balanceOf(seller);
-        uint256 burned = mc.balanceOf(DEAD) - deadBefore;
-
+        // 计算结果 - 使用独立作用域减少堆栈深度
         console.log(unicode"\n=== 卖出结果 ===");
-        console.log(unicode"实际花费 MC: ", mcSpent);
-        console.log(unicode"黑洞销毁 (3%): ", burned);
-        console.log(unicode"收到 USDT: ", usdt.balanceOf(seller));
+        {
+            uint256 mcAfter = mc.balanceOf(seller);
+            console.log(unicode"实际花费 MC: ", mcBefore - mcAfter);
+        }
+        {
+            console.log(
+                unicode"黑洞销毁 (3%): ",
+                mc.balanceOf(DEAD) - deadBalance
+            );
+        }
+        {
+            uint256 usdtAfter = usdt.balanceOf(seller);
+            console.log(unicode"USDT 变化: ", usdtAfter - usdtBefore);
+        }
         console.log(unicode"✓ 卖出完成");
     }
+}
+
+interface IPancakeFactory {
+    function getPair(
+        address tokenA,
+        address tokenB
+    ) external view returns (address);
 }
