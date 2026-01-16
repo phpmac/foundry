@@ -13,3 +13,6 @@ remappings = [
 ]
 
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
+
+[etherscan]
+bsc = { key = "Q2SZUT8S8RZQQIMAF7HHQCZRYCMTW59DKZ" }
