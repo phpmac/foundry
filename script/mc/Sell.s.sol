@@ -13,7 +13,7 @@ import {IPancakeRouter} from "../../src/mc/interfaces/IPancakeRouter.sol";
  * @dev 卖出 MC 脚本
  */
 contract SellScript is Script {
-    address constant MC_ADDRESS = 0xcD0c229a02a9fBCbb6a19347a48d004c46d7e4d1;
+    address constant MC_ADDRESS = 0xE22Ef50d4FD328296E2D366b523C2348b6B319d0;
     address constant ROUTER = 0x10ED43C718714eb63d5aA57B78B54704E256024E;
     address constant FACTORY = 0xcA143Ce32Fe78f1f7019d7d551a6402fC5350c73;
     address constant USDT = 0x55d398326f99059fF775485246999027B3197955;
