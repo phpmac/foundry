@@ -16,7 +16,7 @@ import {TaxDistributor} from "../../src/mc/TaxDistributor.sol";
 contract TransferOwnershipScript is Script {
     // MC 合约地址
     address public constant MC_ADDRESS =
-        0xE22Ef50d4FD328296E2D366b523C2348b6B319d0;
+        0x8E7571CCda1045c548d85229BC444dE5615EC5f4;
 
     // TaxDistributor 合约地址 (如果有的话, 需要填写)
     address public constant TAX_DISTRIBUTOR_ADDRESS = address(0);
@@ -81,7 +81,10 @@ contract TransferOwnershipScript is Script {
         // 验证结果
         console.log(unicode"\n=== 验证结果 ===");
         console.log(unicode"MC 新 Owner:", mc.owner());
-        console.log(unicode"新 Owner 代币余额:", mc.balanceOf(NEW_OWNER) / 1 ether);
+        console.log(
+            unicode"新 Owner 代币余额:",
+            mc.balanceOf(NEW_OWNER) / 1 ether
+        );
 
         console.log(unicode"\n=== 权限转移完成 ===");
     }

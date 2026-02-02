@@ -73,7 +73,8 @@ contract MC is ERC20, Ownable {
     constructor(
         address _taxWallet1,
         address _taxWallet2,
-        address _taxWallet3
+        address _taxWallet3,
+        address _pancakeRouter
     ) ERC20("MC", "MC") Ownable(msg.sender) {
         require(
             _taxWallet1 != address(0) &&
@@ -88,6 +89,9 @@ contract MC is ERC20, Ownable {
 
         // 铸造总量1.2亿给部署者
         _mint(msg.sender, 120_000_000 * 10 ** decimals());
+
+        // 创建交易对
+        createPair(_pancakeRouter);
     }
 
     // ========== 管理功能 ==========
@@ -181,9 +185,7 @@ contract MC is ERC20, Ownable {
     /**
      * @dev 创建交易对
      */
-    function createPair(
-        address _router
-    ) external onlyOwner returns (address pair) {
+    function createPair(address _router) internal returns (address pair) {
         require(_router != address(0), "Invalid router");
 
         pancakeRouter = _router;
@@ -274,7 +276,9 @@ contract MC is ERC20, Ownable {
                 // 使用 try/catch 确保 swap 失败不影响用户转账
                 if (!_inSwap) {
                     _inSwap = true;
-                    try ITaxDistributor(taxDistributor).distributeTax() {} catch {}
+                    try
+                        ITaxDistributor(taxDistributor).distributeTax()
+                    {} catch {}
                     _inSwap = false;
                 }
             } else {
@@ -312,10 +316,7 @@ contract MC is ERC20, Ownable {
         uint256 amount
     ) internal override {
         // 黑名单检查: 黑名单用户不能进行任何转账
-        require(
-            !isBlacklisted[from] && !isBlacklisted[to],
-            "Blacklisted"
-        );
+        require(!isBlacklisted[from] && !isBlacklisted[to], "Blacklisted");
 
         // 买入限制: 交易开关关闭时只有白名单可以买
         // 买入判断: isPair[from] = true (从交易对转出代币给用户)

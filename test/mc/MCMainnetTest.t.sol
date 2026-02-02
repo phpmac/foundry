@@ -26,7 +26,7 @@ contract MCMainnetTest is Test {
     address constant WBNB = 0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c;
 
     // 部署的合约地址
-    address constant MC_ADDRESS = 0xE22Ef50d4FD328296E2D366b523C2348b6B319d0;
+    address constant MC_ADDRESS = 0x8E7571CCda1045c548d85229BC444dE5615EC5f4;
     address constant DISTRIBUTOR_ADDRESS =
         0x0c7d5a9A13828d0F6cEc06FBb60c1351842afb62;
 

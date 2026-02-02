@@ -19,7 +19,7 @@ contract SetupScript is Script {
         vm.startBroadcast(deployerPrivateKey);
 
         // Already deployed MC contract address
-        mc = MC(0xE22Ef50d4FD328296E2D366b523C2348b6B319d0);
+        mc = MC(0x8E7571CCda1045c548d85229BC444dE5615EC5f4);
 
         console.log(unicode"=== MC Token 部署后设置 ===");
         console.log("MC Address:", address(mc));

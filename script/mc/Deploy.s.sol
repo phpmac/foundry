@@ -26,7 +26,7 @@ contract DeployScript is Script {
 
         // 1. 部署 MC 合约
         console.log("Deploying MC token...");
-        MC mc = new MC(taxWallet1, taxWallet2, taxWallet3);
+        MC mc = new MC(taxWallet1, taxWallet2, taxWallet3, ROUTER);
         console.log("MC deployed at:", address(mc));
 
         // 2. 部署 TaxDistributor 合约
