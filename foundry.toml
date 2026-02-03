@@ -13,3 +13,9 @@ remappings = [
 ]
 
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
+
+[rpc_endpoints]
+bsc_mainnet = "https://bsc-dataseed.binance.org"
+
+[etherscan]
+bsc = { key = "Q2SZUT8S8RZQQIMAF7HHQCZRYCMTW59DKZ" }
