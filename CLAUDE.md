@@ -9,6 +9,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - 重点防护: 闪电贷攻击, 数字溢出, 重入攻击
 - 不重复编写已有方法
 
+## 脚本与部署规范
+
+### 1. 禁止硬编码敏感配置
+- **私钥/地址**: 绝不在代码中硬编码私钥、钱包地址、签名地址等敏感信息
+- **RPC 节点**: 默认 RPC 配置应通过 `foundry.toml` 或环境变量设置, 而非硬编码在脚本中
+- **配置读取**: 使用 `vm.envUint()`, `vm.envAddress()` 等函数读取环境变量, 不使用硬编码默认值
+
+### 2. 环境变量管理
+- 提供 `.env.example` 文件作为配置模板
+- **Foundry 原生支持 `.env`**: 使用 `vm.envUint()`, `vm.envAddress()` 等函数可直接读取项目根目录 `.env` 文件中的变量, **不需要** `export` 关键字, 也不需要手动 `source .env`
+- 部署脚本必须验证关键环境变量是否已设置
+- 本地测试配置也应通过环境变量传递, 而非代码中的常量
+
 ### 当前研究课题
 - EIP-7702: 验证 EOA 升级为智能合约后, 结合重入+质押的攻击可行性
 
