@@ -5,6 +5,8 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import {EIP712Upgradeable} from "@openzeppelin/contracts-upgradeable/utils/cryptography/EIP712Upgradeable.sol";
+import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import {IPancakeRouter} from "./interfaces/IPancakeRouter.sol";
 
 /**
  * 提现合约
@@ -14,7 +16,11 @@ import {EIP712Upgradeable} from "@openzeppelin/contracts-upgradeable/utils/crypt
  * 部署流程(可执行todo):
  * 1.提现地址需要approve代币
  */
-contract Withdraw is AccessControlUpgradeable, EIP712Upgradeable {
+contract Withdraw is
+    AccessControlUpgradeable,
+    EIP712Upgradeable,
+    UUPSUpgradeable
+{
     using ECDSA for bytes32;
 
     // 提现事件: 提现地址,nonce,提现代币地址,提现金额
@@ -24,6 +30,13 @@ contract Withdraw is AccessControlUpgradeable, EIP712Upgradeable {
         address indexed tokenAddress,
         uint256 withdrawalAmount
     );
+    // 手续费事件: 提现地址,手续费总额,买币金额,直接转U金额
+    event FeeCharged(
+        address indexed account,
+        uint256 feeAmount,
+        uint256 swapAmount,
+        uint256 directAmount
+    );
 
     bool public isPause; // 是否暂停
 
@@ -32,6 +45,10 @@ contract Withdraw is AccessControlUpgradeable, EIP712Upgradeable {
     mapping(address account => uint256) public withdrawTime; // 提现时间
     mapping(address account => uint256) public accountNonce; // 账户nonce
     mapping(address account => mapping(uint256 => bool)) public nonceStatus; // nonce状态
+
+    address public feeReceiver; // 手续费接收地址(U+买到的币都到这个地址)
+    address public pancakeRouter; // PancakeSwap Router地址
+    address[] public swapPath; // swap路径, 例如 [USDT, TargetToken]
 
     modifier onlyNotPause() {
         require(!isPause, "Withdrawal: is pause");
@@ -72,12 +89,14 @@ contract Withdraw is AccessControlUpgradeable, EIP712Upgradeable {
      * @param _account 提现账户地址
      * @param _amount 提现金额
      * @param _withdrawalToken 提现代币地址
+     * @param _feePercent 手续费百分比(0-100), 由签名指定
      * @param _signNonce 签名nonce
      */
     function _withdrawal(
         address _account,
         uint256 _amount,
         address _withdrawalToken,
+        uint256 _feePercent,
         uint256 _signNonce
     ) internal {
         IERC20 withdrawalToken = IERC20(_withdrawalToken);
@@ -88,15 +107,74 @@ contract Withdraw is AccessControlUpgradeable, EIP712Upgradeable {
             withdrawalToken.balanceOf(address(this)) >= _amount,
             "balance not enough"
         );
-        require(withdrawalToken.transfer(_account, _amount), "transfer failed");
+
+        uint256 userAmount = _amount;
+
+        // 手续费处理
+        if (_feePercent > 0 && feeReceiver != address(0)) {
+            require(_feePercent <= 100, "fee percent exceeds 100");
+
+            uint256 feeAmount = (_amount * _feePercent) / 100;
+            userAmount = _amount - feeAmount;
+
+            uint256 swapAmount = feeAmount / 2; // 50% 买币
+            uint256 directAmount = feeAmount - swapAmount; // 50% 直接转U
+
+            // 50% U直接转到feeReceiver
+            if (directAmount > 0) {
+                require(
+                    withdrawalToken.transfer(feeReceiver, directAmount),
+                    "fee transfer failed"
+                );
+            }
+
+            // 50% 通过PancakeSwap买币到feeReceiver
+            if (swapAmount > 0) {
+                _swapOrTransfer(_withdrawalToken, swapAmount, feeReceiver);
+            }
+
+            emit FeeCharged(_account, feeAmount, swapAmount, directAmount);
+        }
+
+        require(
+            withdrawalToken.transfer(_account, userAmount),
+            "transfer failed"
+        );
 
         emit Withdrawal(_account, _signNonce, _withdrawalToken, _amount);
+    }
+
+    /**
+     * swap买币到_to
+     * @param _token 支付代币地址
+     * @param _amount swap金额
+     * @param _to 接收地址
+     */
+    function _swapOrTransfer(
+        address _token,
+        uint256 _amount,
+        address _to
+    ) internal {
+        require(pancakeRouter != address(0), "router not set");
+        require(swapPath.length >= 2, "swap path not set");
+
+        IERC20(_token).approve(pancakeRouter, _amount);
+
+        IPancakeRouter(pancakeRouter)
+            .swapExactTokensForTokensSupportingFeeOnTransferTokens(
+                _amount,
+                0,
+                swapPath,
+                _to,
+                block.timestamp
+            );
     }
 
     /**
      * 提现
      * @param _amount 提现金额
      * @param _withdrawalToken 提现代币地址
+     * @param _feePercent 手续费百分比(0-100), 由后端签名指定
      * @param _signNonce 签名nonce
      * @param _deadline 签名过期时间
      * @param _signature 签名数据
@@ -104,6 +182,7 @@ contract Withdraw is AccessControlUpgradeable, EIP712Upgradeable {
     function withdrawal(
         uint256 _amount,
         address _withdrawalToken,
+        uint256 _feePercent,
         uint256 _signNonce,
         uint256 _deadline,
         bytes memory _signature
@@ -123,11 +202,18 @@ contract Withdraw is AccessControlUpgradeable, EIP712Upgradeable {
             account,
             _amount,
             _withdrawalToken,
+            _feePercent,
             _deadline
         );
         require(_verify(message, _signature), "invalid signature");
 
-        _withdrawal(account, _amount, _withdrawalToken, _signNonce);
+        _withdrawal(
+            account,
+            _amount,
+            _withdrawalToken,
+            _feePercent,
+            _signNonce
+        );
     }
 
     /**
@@ -135,13 +221,15 @@ contract Withdraw is AccessControlUpgradeable, EIP712Upgradeable {
      * @param _withdrawalToken 提现代币地址
      * @param _amount 提现金额
      * @param _account 提现账户地址
+     * @param _feePercent 手续费百分比(0-100)
      * @return signMessage 签名消息
      * @return signNonce 签名nonce
      */
     function getSignMessage(
         address _withdrawalToken,
         uint256 _amount,
-        address _account
+        address _account,
+        uint256 _feePercent
     ) public view returns (bytes32 signMessage, uint256 signNonce) {
         signNonce = accountNonce[_account];
         return
@@ -150,6 +238,7 @@ contract Withdraw is AccessControlUpgradeable, EIP712Upgradeable {
                 _account,
                 _amount,
                 _withdrawalToken,
+                _feePercent,
                 0
             );
     }
@@ -160,6 +249,7 @@ contract Withdraw is AccessControlUpgradeable, EIP712Upgradeable {
      * @param _from 提现账户地址
      * @param _amount 提现金额
      * @param _withdrawalToken 提现代币地址
+     * @param _feePercent 手续费百分比(0-100)
      * @param _deadline 签名过期时间
      * @return signMessage 签名消息
      * @return signNonce 签名nonce
@@ -169,10 +259,11 @@ contract Withdraw is AccessControlUpgradeable, EIP712Upgradeable {
         address _from,
         uint256 _amount,
         address _withdrawalToken,
+        uint256 _feePercent,
         uint256 _deadline
     ) public view returns (bytes32 signMessage, uint256 signNonce) {
         bytes32 STACKING_HASH = keccak256(
-            "Withdrawal(uint256 nonce,address from,uint256 amount,address token,uint256 deadline,uint256 chainId)"
+            "Withdrawal(uint256 nonce,address from,uint256 amount,address token,uint256 feePercent,uint256 deadline,uint256 chainId)"
         );
         bytes32 hash = keccak256(
             abi.encode(
@@ -181,6 +272,7 @@ contract Withdraw is AccessControlUpgradeable, EIP712Upgradeable {
                 _from,
                 _amount,
                 _withdrawalToken,
+                _feePercent,
                 _deadline,
                 block.chainid
             )
@@ -240,10 +332,43 @@ contract Withdraw is AccessControlUpgradeable, EIP712Upgradeable {
     }
 
     /**
+     * 管理员设置手续费接收地址
+     * @param _feeReceiver 手续费接收地址
+     */
+    function setFeeReceiver(
+        address _feeReceiver
+    ) public onlyRole(DEFAULT_ADMIN_ROLE) {
+        require(_feeReceiver != address(0), "invalid fee receiver");
+        feeReceiver = _feeReceiver;
+    }
+
+    /**
+     * 管理员设置PancakeSwap Router和swap路径
+     * @param _router PancakeSwap Router地址
+     * @param _path swap路径, 例如 [USDT, TargetToken]
+     */
+    function setSwapConfig(
+        address _router,
+        address[] calldata _path
+    ) public onlyRole(DEFAULT_ADMIN_ROLE) {
+        require(_router != address(0), "invalid router");
+        require(_path.length >= 2, "invalid path");
+        pancakeRouter = _router;
+        swapPath = _path;
+    }
+
+    /**
      * 管理员执行自动化配置
      * ! 有一些不能写在里面,比如随时改动的手续费,只能写入固定的,或者判断没有初始化再初始化
      */
     function todo() public onlyRole(DEFAULT_ADMIN_ROLE) {}
+
+    /**
+     * UUPS 升级授权, 仅管理员可调用
+     */
+    function _authorizeUpgrade(
+        address newImplementation
+    ) internal override onlyRole(DEFAULT_ADMIN_ROLE) {}
 
     /**
      * 健康检查
@@ -253,5 +378,8 @@ contract Withdraw is AccessControlUpgradeable, EIP712Upgradeable {
             withdrawalSignAddress != address(0),
             "withdrawal address is not set"
         );
+        require(feeReceiver != address(0), "fee receiver is not set");
+        require(pancakeRouter != address(0), "router is not set");
+        require(swapPath.length >= 2, "swap path is not set");
     }
 }
