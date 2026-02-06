@@ -54,14 +54,13 @@ contract MCTest is Test {
         usdt = IERC20(USDT_ADDR);
 
         // 1. 部署MC合约
-        mc = new MC(taxWallet1, taxWallet2, taxWallet3);
+        mc = new MC(taxWallet1, taxWallet2, taxWallet3, ROUTER);
         console.log(unicode"=== 步骤1: 部署MC合约 ===");
         console.log(unicode"MC地址:");
         console.logAddress(address(mc));
 
-        // 2. 创建MC/USDT交易对
-        pair = mc.createPair(ROUTER);
-        mc.setPair(pair, true);
+        // 2. 获取MC/USDT交易对 (constructor中已创建)
+        pair = IPancakeFactory(FACTORY).getPair(address(mc), USDT_ADDR);
         console.log(unicode"Pair地址:");
         console.logAddress(pair);
 

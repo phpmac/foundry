@@ -27,7 +27,7 @@ contract TaxDistributorTest is Test {
         usdt = IERC20(USDT_ADDR);
 
         // 部署MC合约
-        mc = new MC(taxWallet1, taxWallet2, taxWallet3);
+        mc = new MC(taxWallet1, taxWallet2, taxWallet3, ROUTER);
 
         // 创建MC/USDT交易对并添加流动性
         address pair = IPancakeFactory(FACTORY).createPair(address(mc), USDT_ADDR);

@@ -36,7 +36,7 @@ contract SetupScript is Script {
 
         if (pair == address(0)) {
             console.log(unicode"交易对不存在, 正在创建...");
-            pair = mc.createPair(pancakeRouter);
+            revert("createPair is internal, deploy via MC constructor");
             console.log(unicode"交易对已创建:", pair);
         } else {
             console.log(unicode"交易对已存在:", pair);

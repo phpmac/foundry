@@ -28,7 +28,7 @@ interface IPancakeRouter {
         address[] calldata path,
         address to,
         uint256 deadline
-    ) external returns (uint256[] memory amounts);
+    ) external;
 
     function swapExactTokensForTokens(
         uint256 amountIn,
