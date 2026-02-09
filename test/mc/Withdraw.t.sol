@@ -23,7 +23,7 @@ contract WithdrawTest is Test {
     address public constant ROUTER = 0x10ED43C718714eb63d5aA57B78B54704E256024E;
     // 目标代币
     address public constant MC_TOKEN =
-        0xbA2aE424d960c26247Dd6c32edC70B295c744C43;
+        0xb531613381ccE69DACdfe3693570f8cbf8BDA81f;
     // 合约管理员
     address public constant ADMIN = 0x130151AFa86CD285223f95BBc1e5Aa99eef8B7F2;
     // USDT鲸鱼
@@ -49,7 +49,7 @@ contract WithdrawTest is Test {
         withdraw.setWithdrawalSignAddress(signer);
 
         // ! 强制设置手续费接收和swap配置 (覆盖链上状态)
-        withdraw.setFeeReceiver(0xeEeafD22bF0070CFC434F6A50ca657D46bA3fAa6);
+        withdraw.setFeeReceiver(0xDc2073BaB1c4224F958589c46D53347125C8D7Ae);
         address[] memory path = new address[](2);
         path[0] = USDT_ADDR;
         path[1] = MC_TOKEN;

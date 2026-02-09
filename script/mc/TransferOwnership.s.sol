@@ -16,7 +16,7 @@ import {TaxDistributor} from "../../src/mc/TaxDistributor.sol";
 contract TransferOwnershipScript is Script {
     // MC 合约地址
     address public constant MC_ADDRESS =
-        0x8E7571CCda1045c548d85229BC444dE5615EC5f4;
+        0xb531613381ccE69DACdfe3693570f8cbf8BDA81f;
 
     // TaxDistributor 合约地址 (如果有的话, 需要填写)
     address public constant TAX_DISTRIBUTOR_ADDRESS = address(0);
@@ -25,17 +25,10 @@ contract TransferOwnershipScript is Script {
     address public constant NEW_OWNER =
         0x348d62c4134be9B03E324B1d1A981627EAF47695;
 
-    // 当前 Owner 地址
-    address public constant CURRENT_OWNER =
-        0x20F7acfc15a4EB3142F6d1DdFb219a660541484e;
-
     function run() external {
-        // 获取 owner 私钥
+        // 获取 owner 私钥, 并从私钥派生当前 owner 地址
         uint256 ownerPrivateKey = vm.envUint("PRIVATE_KEY");
-        require(
-            vm.addr(ownerPrivateKey) == CURRENT_OWNER,
-            "Invalid private key"
-        );
+        address CURRENT_OWNER = vm.addr(ownerPrivateKey);
 
         // 加载合约
         MC mc = MC(MC_ADDRESS);

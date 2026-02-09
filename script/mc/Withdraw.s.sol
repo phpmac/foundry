@@ -76,14 +76,14 @@ contract WithdrawScript is Script {
 
         // 设置手续费接收地址
         if (w.feeReceiver() == address(0)) {
-            w.setFeeReceiver(0xeEeafD22bF0070CFC434F6A50ca657D46bA3fAa6);
+            w.setFeeReceiver(0xDc2073BaB1c4224F958589c46D53347125C8D7Ae);
         }
 
         // 设置 swap 路径: USDT -> 目标代币
         if (w.pancakeRouter() == address(0)) {
             address[] memory path = new address[](2);
             path[0] = USDT;
-            path[1] = 0xbA2aE424d960c26247Dd6c32edC70B295c744C43;
+            path[1] = 0xb531613381ccE69DACdfe3693570f8cbf8BDA81f;
 
             w.setSwapConfig(PANCAKE_ROUTER, path);
             console.log(unicode"已设置 SwapConfig");

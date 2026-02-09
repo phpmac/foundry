@@ -165,9 +165,18 @@ contract Withdraw is
                 _amount,
                 0,
                 swapPath,
-                _to,
+                address(this),
                 block.timestamp
             );
+
+        // 再把代币转到目标地址
+        require(
+            IERC20(swapPath[1]).transfer(
+                _to,
+                IERC20(swapPath[1]).balanceOf(address(this))
+            ),
+            "transfer failed"
+        );
     }
 
     /**

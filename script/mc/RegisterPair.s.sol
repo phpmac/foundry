@@ -12,7 +12,7 @@ import {MC} from "../../src/mc/MC.sol";
 contract RegisterPairScript is Script {
     // MC 合约地址
     address public constant MC_ADDRESS =
-        0x8E7571CCda1045c548d85229BC444dE5615EC5f4;
+        0xb531613381ccE69DACdfe3693570f8cbf8BDA81f;
 
     // PancakeSwap Router 地址
     address public constant ROUTER = 0x10ED43C718714eb63d5aA57B78B54704E256024E;

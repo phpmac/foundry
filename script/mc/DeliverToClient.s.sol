@@ -12,7 +12,7 @@ import {MC} from "../../src/mc/MC.sol";
 contract DeliverToClientScript is Script {
     // MC 合约地址
     address public constant MC_ADDRESS =
-        0x8E7571CCda1045c548d85229BC444dE5615EC5f4;
+        0xb531613381ccE69DACdfe3693570f8cbf8BDA81f;
 
     // 客户地址
     address public constant CLIENT_ADDRESS =
