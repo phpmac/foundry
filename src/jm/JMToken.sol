@@ -19,9 +19,6 @@ contract JMToken is ERC20, Ownable {
     // 发行总量: 2100万
     uint256 public constant TOTAL_SUPPLY = 21_000_000 ether;
 
-    // 交易所锁仓: 200万(1年)
-    uint256 public constant EXCHANGE_LOCK = 2_000_000 ether;
-
     // 燃烧总量: 500万(分10个月)
     uint256 public constant TOTAL_BURN_AMOUNT = 5_000_000 ether;
     uint256 public constant MONTHLY_BURN = 500_000 ether;

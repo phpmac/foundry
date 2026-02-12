@@ -22,15 +22,21 @@ contract JMTokenTest is Test {
     address public user2;
     address public user3;
 
-    // BSC主网 PancakeSwap Router (测试使用模拟)
+    // BSC主网 PancakeSwap Router
     address public constant PANCAKE_ROUTER = 0x10ED43C718714eb63d5aA57B78B54704E256024E;
     address public constant WBNB = 0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c;
 
     function setUp() public {
+        // 使用BSC主网fork,不使用mock
+        vm.createSelectFork(vm.envString("ETH_RPC_URL"));
+
         owner = address(this);
         user1 = makeAddr("user1");
         user2 = makeAddr("user2");
         user3 = makeAddr("user3");
+
+        // 给测试合约分配BNB用于创建流动性
+        vm.deal(address(this), 100 ether);
 
         // 给测试用户分配ETH
         vm.deal(user1, 100 ether);
@@ -50,8 +56,11 @@ contract JMTokenTest is Test {
         jmToken.setLPDistributor(address(lpDistributor));
         jmbToken.setMinter(address(lpDistributor));
 
-        // 转移代币到JMToken合约用于私募和燃烧
+        // 转移代币到JMToken合约用于私募、燃烧和建池
         jmToken.transfer(address(jmToken), 17_000_000 ether);
+
+        // 按需求使用Pancake真实路由添加20 BNB流动性
+        jmToken.addLiquidity{value: 20 ether}(666_667 ether);
     }
 
     // ========== 基础功能测试 ==========
@@ -86,6 +95,14 @@ contract JMTokenTest is Test {
         vm.expectRevert("Send 0.2 BNB");
         vm.prank(user1);
         jmToken.buyPrivateSale{value: 0.1 ether}();
+    }
+
+    function test_PrivateSaleClosed() public {
+        jmToken.setPrivateSaleEnabled(false);
+
+        vm.expectRevert("Private sale closed");
+        vm.prank(user1);
+        jmToken.buyPrivateSale{value: 0.2 ether}();
     }
 
     // ========== 燃烧测试 ==========
@@ -163,6 +180,23 @@ contract JMTokenTest is Test {
         assertEq(jmbToken.minter(), address(lpDistributor));
     }
 
+    function test_JMB_NonTransferable() public {
+        jmbToken.setMinter(address(this));
+        jmbToken.mint(user1, 100 ether);
+
+        vm.expectRevert(JMBToken.NonTransferable.selector);
+        vm.prank(user1);
+        jmbToken.approve(user2, 1 ether);
+
+        vm.expectRevert(JMBToken.NonTransferable.selector);
+        vm.prank(user1);
+        jmbToken.transfer(user2, 1 ether);
+
+        vm.expectRevert(JMBToken.NonTransferable.selector);
+        vm.prank(user2);
+        jmbToken.transferFrom(user1, user2, 1 ether);
+    }
+
     // ========== 交易所锁仓测试 ==========
 
     function test_ExchangeLockRecipient() public {
@@ -213,8 +247,123 @@ contract JMTokenTest is Test {
             jmToken.getExchangeLockStatus();
 
         assertEq(amount, 2_000_000 ether);
+        assertGt(unlockTime, block.timestamp);
         assertEq(recipient, 0xe7c35767dB12D79d120e0b5c30bFd960b2b2B89e);
         assertFalse(claimed);
         assertFalse(canClaim); // 时间还没到
+    }
+
+    // ========== 需求关键路径测试 ==========
+
+    function test_BuyFee_Is3Percent() public {
+        jmToken.setTradingEnabled(true);
+        // 关闭分红分发,避免买入时二次swap影响本用例的费率验证
+        jmToken.setLPDistributor(address(0));
+
+        uint256 amount = 1000 ether;
+        address pair = jmToken.lpPair();
+
+        uint256 userBefore = jmToken.balanceOf(user1);
+        uint256 contractBefore = jmToken.balanceOf(address(jmToken));
+        uint256 deadBefore = jmToken.balanceOf(jmToken.DEAD());
+
+        vm.prank(pair);
+        jmToken.transfer(user1, amount);
+
+        uint256 userDelta = jmToken.balanceOf(user1) - userBefore;
+        uint256 contractDelta = jmToken.balanceOf(address(jmToken)) - contractBefore;
+        uint256 deadDelta = jmToken.balanceOf(jmToken.DEAD()) - deadBefore;
+
+        // 买入3%: 1%回流,1.5%分红,0.5%黑洞
+        // 关闭分红分发后,合约应累计1%+1.5%=2.5%
+        assertEq(userDelta, 970 ether);
+        assertEq(contractDelta, 25 ether);
+        assertEq(deadDelta, 5 ether);
+    }
+
+    function test_SellFee_Is3Percent() public {
+        vm.prank(user1);
+        jmToken.buyPrivateSale{value: 0.2 ether}();
+
+        uint256 amount = 1000 ether;
+        address pair = jmToken.lpPair();
+
+        uint256 pairBefore = jmToken.balanceOf(pair);
+        uint256 contractBefore = jmToken.balanceOf(address(jmToken));
+        uint256 deadBefore = jmToken.balanceOf(jmToken.DEAD());
+
+        vm.prank(user1);
+        jmToken.transfer(pair, amount);
+
+        uint256 pairDelta = jmToken.balanceOf(pair) - pairBefore;
+        uint256 contractDelta = jmToken.balanceOf(address(jmToken)) - contractBefore;
+        uint256 deadDelta = jmToken.balanceOf(jmToken.DEAD()) - deadBefore;
+
+        // pair收到970(净卖出) + 15(rewardFee swap回流) = 985
+        assertEq(pairDelta, 985 ether);
+        assertEq(contractDelta, 10 ether);
+        assertEq(deadDelta, 5 ether);
+    }
+
+    function test_RemoveLiquidityETH_RealPath_Reverts() public {
+        jmToken.setTradingEnabled(true);
+
+        address pair = jmToken.lpPair();
+        uint256 lpInJMToken = IPancakePair(pair).balanceOf(address(jmToken));
+        uint256 lpToRemove = lpInJMToken / 10;
+
+        // 从JMToken合约提取LP到owner,再走真实router移除流动性
+        jmToken.withdrawTokens(pair, lpToRemove);
+        IPancakePair(pair).approve(PANCAKE_ROUTER, lpToRemove);
+
+        // 主网真实路径当前会回退,这是需求与实现的核心风险点
+        vm.expectRevert();
+        IPancakeRouter(PANCAKE_ROUTER).removeLiquidityETH(
+            address(jmToken), lpToRemove, 0, 0, user1, block.timestamp
+        );
+    }
+
+    function test_LPRewardUnlockFlow_BuyPathBlocked() public {
+        jmToken.setTradingEnabled(true);
+
+        address pair = jmToken.lpPair();
+        IPancakePair pairContract = IPancakePair(pair);
+        (uint112 reserve0, uint112 reserve1, ) = pairContract.getReserves();
+        uint256 bnbReserve = pairContract.token0() == WBNB ? uint256(reserve0) : uint256(reserve1);
+        uint256 totalLp = pairContract.totalSupply();
+
+        // 1) 从JMToken提取约4 BNB价值LP,转给user1并质押
+        uint256 lpForStake = (4 ether * totalLp) / bnbReserve;
+        jmToken.withdrawTokens(pair, lpForStake);
+        pairContract.transfer(user1, lpForStake);
+
+        vm.startPrank(user1);
+        pairContract.approve(address(lpDistributor), lpForStake);
+        lpDistributor.stakeLP(lpForStake);
+        vm.stopPrank();
+
+        // 2) 分发1 BNB分红
+        lpDistributor.distributeBNB{value: 1 ether}();
+
+        // 3) 真实主网买入路径当前回退,导致recordBuy无法执行
+        vm.expectRevert();
+        _swapExactETHForJM(user1, 0.01 ether);
+
+        (, uint256 pending1, uint256 unlocked1, uint256 needBuy1, uint256 bought1) = lpDistributor.getUserInfo(user1);
+        assertGt(pending1, 0);
+        assertEq(unlocked1, 0);
+        assertEq(needBuy1, 0);
+        assertEq(bought1, 0);
+    }
+
+    function _swapExactETHForJM(address buyer, uint256 bnbAmount) internal {
+        address[] memory path = new address[](2);
+        path[0] = WBNB;
+        path[1] = address(jmToken);
+
+        vm.prank(buyer);
+        IPancakeRouter(PANCAKE_ROUTER).swapExactETHForTokensSupportingFeeOnTransferTokens{value: bnbAmount}(
+            0, path, buyer, block.timestamp
+        );
     }
 }
