@@ -13,6 +13,19 @@ description: 使用 Foundry CREATE2 生成靓号合约地址并部署. 当用户
 - 单元测试验证
 - 合约验证命令
 
+## 快速执行
+
+按下面 5 条命令即可完整跑通 `Counter` 示例:
+
+```bash
+cast create2 --ends-with 1111 --init-code $(forge inspect Counter bytecode)
+# 把上一步输出的 Salt 写入 .env -> VANITY_SALT=0x...
+forge test --match-path test/jm/Create2Vanity.t.sol -vvv --offline
+
+forge script script/jm/DeployVanity.s.sol --broadcast
+forge verify-contract <address> src/Counter.sol:Counter --chain bsc --watch
+```
+
 ## 标准流程
 
 1. 计算目标合约 `init code` (默认示例用 `Counter`):
@@ -59,6 +72,10 @@ forge verify-contract <address> src/Counter.sol:Counter --chain bsc --watch
 ## 单元测试模板
 
 见: [resources/create2-vanity-test-template.md](resources/create2-vanity-test-template.md)
+
+## 安全补充资料
+
+见: [resources/permissionless-security-notes.md](resources/permissionless-security-notes.md)
 
 ## 注意事项
 
