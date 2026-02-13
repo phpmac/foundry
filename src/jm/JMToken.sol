@@ -18,6 +18,7 @@ contract JMToken is ERC20, Ownable {
 
     // 发行总量: 2100万
     uint256 public constant TOTAL_SUPPLY = 21_000_000 ether;
+    uint256 public constant RESERVED_SUPPLY = 19_000_000 ether; // 私募1200万 + 燃烧500万 + 锁仓200万
 
     // 燃烧总量: 500万(分10个月)
     uint256 public constant TOTAL_BURN_AMOUNT = 5_000_000 ether;
@@ -73,13 +74,16 @@ contract JMToken is ERC20, Ownable {
 
     // 私募状态
     uint256 public privateSaleSold = 0;
-    // 私募收款地址 - 可修改
-    address public privateSaleRecipient;
+    // TODO 私募收款地址
+    address public constant PRIVATE_SALE_RECIPIENT =
+        0x23A3af0603918Ba5B0B5f6324DBFaa56d16856fF;
 
     // 交易所锁仓200万 - 1年解锁
     uint256 public constant EXCHANGE_LOCK_AMOUNT = 2_000_000 ether;
     uint256 public constant LOCK_PERIOD = 365 days;
-    address public exchangeLockRecipient; // 解锁后接收地址
+    // TODO 交易所锁仓接收地址
+    address public constant EXCHANGE_LOCK_RECIPIENT =
+        0xe7c35767dB12D79d120e0b5c30bFd960b2b2B89e; // 解锁后接收地址
     uint256 public exchangeLockUnlockTime; // 解锁时间戳
     bool public exchangeLockClaimed = false; // 是否已解锁
 
@@ -90,6 +94,7 @@ contract JMToken is ERC20, Ownable {
 
     // 防重入锁
     bool private _inSwap = false;
+    bool public removeLiquidityTaxEnabled = false; // 默认关闭,避免误判普通交易
 
     // ========== 事件 ==========
 
@@ -98,20 +103,32 @@ contract JMToken is ERC20, Ownable {
     event WhitelistUpdated(address indexed account, bool status);
     event BlacklistUpdated(address indexed account, bool status);
     event MonthlyBurn(uint256 indexed month, uint256 amount);
-    event PrivateSalePurchase(address indexed buyer, uint256 bnbAmount, uint256 tokenAmount);
+    event PrivateSalePurchase(
+        address indexed buyer,
+        uint256 bnbAmount,
+        uint256 tokenAmount
+    );
     event LPRewardDistributed(uint256 amount);
     event LiquidityAdded(uint256 tokenAmount, uint256 bnbAmount);
-    event ExchangeLockClaimed(address indexed recipient, uint256 amount, uint256 unlockTime);
+    event ExchangeLockClaimed(
+        address indexed recipient,
+        uint256 amount,
+        uint256 unlockTime
+    );
     event PrivateSaleRecipientUpdated(address indexed newRecipient);
 
     // ========== 构造函数 ==========
 
-    constructor(address _pancakeRouter) ERC20("JM Token", "JM") Ownable(msg.sender) {
+    constructor(
+        address _pancakeRouter
+    ) ERC20("JM Token", "JM") Ownable(msg.sender) {
         require(_pancakeRouter != address(0), "Invalid router");
         pancakeRouter = _pancakeRouter;
 
-        // 铸造总量给部署者
-        _mint(msg.sender, TOTAL_SUPPLY);
+        // 预留1900万到合约: 私募1200万 + 燃烧500万 + 锁仓200万
+        _mint(address(this), RESERVED_SUPPLY);
+        // 剩余200万给部署者,用于运营与灵活配置
+        _mint(_msgSender(), TOTAL_SUPPLY - RESERVED_SUPPLY);
 
         // 创建交易对
         address pair = IPancakeFactory(IPancakeRouter(_pancakeRouter).factory())
@@ -121,11 +138,6 @@ contract JMToken is ERC20, Ownable {
         // 设置lastBurnTime为当前时间,首次燃烧需等待30天
         lastBurnTime = block.timestamp;
 
-        // 设置私募收款地址 - 默认地址但可修改
-        privateSaleRecipient = 0x23A3af0603918Ba5B0B5f6324DBFaa56d16856fF;
-
-        // 设置交易所锁仓参数 - 固定解锁地址
-        exchangeLockRecipient = 0xe7c35767dB12D79d120e0b5c30bFd960b2b2B89e;
         exchangeLockUnlockTime = block.timestamp + LOCK_PERIOD;
 
         // 添加合约本身到白名单
@@ -169,21 +181,21 @@ contract JMToken is ERC20, Ownable {
         isWhitelisted[_distributor] = true;
     }
 
-    /**
-     * @dev 修改私募收款地址 - 仅owner
-     */
-    function setPrivateSaleRecipient(address _recipient) external onlyOwner {
-        require(_recipient != address(0), "Invalid recipient");
-        privateSaleRecipient = _recipient;
-        emit PrivateSaleRecipientUpdated(_recipient);
+    function setRemoveLiquidityTaxEnabled(bool enabled) external onlyOwner {
+        removeLiquidityTaxEnabled = enabled;
     }
 
     // ========== 接收BNB ==========
 
     receive() external payable {
         // 私募自动发放
-        if (privateSaleEnabled && msg.value == PRIVATE_SALE_PRICE) {
-            _processPrivateSale(msg.sender);
+        if (privateSaleEnabled) {
+            if (msg.value == PRIVATE_SALE_PRICE) {
+                _processPrivateSale(_msgSender());
+            } else {
+                // TODO 否则就报错,免退回
+                revert("Invalid BNB amount");
+            }
         }
     }
 
@@ -191,7 +203,10 @@ contract JMToken is ERC20, Ownable {
 
     function _processPrivateSale(address buyer) internal {
         require(privateSaleSold < PRIVATE_SALE_MAX, "Private sale ended");
-        require(balanceOf(address(this)) >= PRIVATE_SALE_TOKENS, "Insufficient tokens");
+        require(
+            balanceOf(address(this)) >= PRIVATE_SALE_TOKENS,
+            "Insufficient tokens"
+        );
 
         privateSaleSold++;
 
@@ -199,16 +214,14 @@ contract JMToken is ERC20, Ownable {
         _transfer(address(this), buyer, PRIVATE_SALE_TOKENS);
 
         // 将收到的BNB转给私募收款地址
-        (bool success, ) = privateSaleRecipient.call{value: msg.value}("");
+        (bool success, ) = PRIVATE_SALE_RECIPIENT.call{value: msg.value}("");
         require(success, "BNB transfer failed");
 
-        emit PrivateSalePurchase(buyer, PRIVATE_SALE_PRICE, PRIVATE_SALE_TOKENS);
-    }
-
-    function buyPrivateSale() external payable {
-        require(privateSaleEnabled, "Private sale closed");
-        require(msg.value == PRIVATE_SALE_PRICE, "Send 0.2 BNB");
-        _processPrivateSale(msg.sender);
+        emit PrivateSalePurchase(
+            buyer,
+            PRIVATE_SALE_PRICE,
+            PRIVATE_SALE_TOKENS
+        );
     }
 
     // ========== 每月燃烧 ==========
@@ -226,6 +239,8 @@ contract JMToken is ERC20, Ownable {
         // 从底池直接转JM到死亡地址销毁
         // 使用super._update绕过pair的特殊处理
         super._update(lpPair, DEAD, burnAmount);
+        // 立即同步储备,避免pair储备与真实余额偏离
+        IPancakePair(lpPair).sync();
 
         burnCount++;
         lastBurnTime = block.timestamp;
@@ -235,7 +250,11 @@ contract JMToken is ERC20, Ownable {
 
     // ========== 核心转账逻辑 ==========
 
-    function _update(address from, address to, uint256 amount) internal override {
+    function _update(
+        address from,
+        address to,
+        uint256 amount
+    ) internal override {
         // 黑名单检查
         require(!isBlacklisted[from] && !isBlacklisted[to], "Blacklisted");
 
@@ -285,10 +304,13 @@ contract JMToken is ERC20, Ownable {
      * @dev 判断是否为撤池子(从LP合约转出LP token)
      * 简化为: to是router且from不是pair和合约
      */
-    function isRemoveLiquidity(address from, address to) public view returns (bool) {
-        // 撤池子时: 用户调用Router.removeLiquidity,LP token会先转到Router
-        // 这里简化为判断from是pair的情况
-        return from == lpPair && to == pancakeRouter;
+    function isRemoveLiquidity(
+        address from,
+        address to
+    ) public view returns (bool) {
+        // 纯Token转账路径无法可靠区分“买入”和“撤池”; 默认关闭该路径税,避免误伤正常交易
+        if (!removeLiquidityTaxEnabled) return false;
+        return from == lpPair && to == pancakeRouter; // 仅兼容旧逻辑,生产建议通过专门路由处理
     }
 
     /**
@@ -359,7 +381,11 @@ contract JMToken is ERC20, Ownable {
     /**
      * @dev 处理撤池子
      */
-    function _processRemoveLiquidity(address from, address to, uint256 amount) internal {
+    function _processRemoveLiquidity(
+        address from,
+        address to,
+        uint256 amount
+    ) internal {
         // 撤池子税20%
         uint256 fee = (amount * REMOVE_LIQUIDITY_FEE) / FEE_BASE;
         uint256 liquidityFee = (amount * REMOVE_LIQUIDITY) / FEE_BASE;
@@ -413,19 +439,22 @@ contract JMToken is ERC20, Ownable {
 
         _approve(address(this), pancakeRouter, tokenAmount);
 
-        IPancakeRouter(pancakeRouter).swapExactTokensForETHSupportingFeeOnTransferTokens(
-            tokenAmount,
-            0,
-            path,
-            address(this),
-            block.timestamp
-        );
+        IPancakeRouter(pancakeRouter)
+            .swapExactTokensForETHSupportingFeeOnTransferTokens(
+                tokenAmount,
+                0,
+                path,
+                address(this),
+                block.timestamp
+            );
     }
 
     /**
      * @dev 根据代币数量估算BNB金额
      */
-    function _getBNBAmountForTokens(uint256 tokenAmount) internal view returns (uint256) {
+    function _getBNBAmountForTokens(
+        uint256 tokenAmount
+    ) internal view returns (uint256) {
         IPancakePair pair = IPancakePair(lpPair);
         (uint112 reserve0, uint112 reserve1, ) = pair.getReserves();
 
@@ -448,30 +477,46 @@ contract JMToken is ERC20, Ownable {
      */
     function claimExchangeLock() external {
         require(!exchangeLockClaimed, "Already claimed");
-        require(block.timestamp >= exchangeLockUnlockTime, "Lock period not ended");
-        require(balanceOf(address(this)) >= EXCHANGE_LOCK_AMOUNT, "Insufficient balance");
+        require(
+            block.timestamp >= exchangeLockUnlockTime,
+            "Lock period not ended"
+        );
+        require(
+            balanceOf(address(this)) >= EXCHANGE_LOCK_AMOUNT,
+            "Insufficient balance"
+        );
 
         exchangeLockClaimed = true;
-        _transfer(address(this), exchangeLockRecipient, EXCHANGE_LOCK_AMOUNT);
+        _transfer(address(this), EXCHANGE_LOCK_RECIPIENT, EXCHANGE_LOCK_AMOUNT);
 
-        emit ExchangeLockClaimed(exchangeLockRecipient, EXCHANGE_LOCK_AMOUNT, block.timestamp);
+        emit ExchangeLockClaimed(
+            EXCHANGE_LOCK_RECIPIENT,
+            EXCHANGE_LOCK_AMOUNT,
+            block.timestamp
+        );
     }
 
     /**
      * @dev 查看锁仓状态
      */
-    function getExchangeLockStatus() external view returns (
-        uint256 amount,
-        uint256 unlockTime,
-        bool canClaim,
-        bool claimed,
-        address recipient
-    ) {
+    function getExchangeLockStatus()
+        external
+        view
+        returns (
+            uint256 amount,
+            uint256 unlockTime,
+            bool canClaim,
+            bool claimed,
+            address recipient
+        )
+    {
         amount = EXCHANGE_LOCK_AMOUNT;
         unlockTime = exchangeLockUnlockTime;
-        canClaim = !exchangeLockClaimed && block.timestamp >= exchangeLockUnlockTime;
+        canClaim =
+            !exchangeLockClaimed &&
+            block.timestamp >= exchangeLockUnlockTime;
         claimed = exchangeLockClaimed;
-        recipient = exchangeLockRecipient;
+        recipient = EXCHANGE_LOCK_RECIPIENT;
     }
 
     // ========== 流动性管理 ==========
@@ -513,16 +558,23 @@ contract JMToken is ERC20, Ownable {
 
     // ========== 视图函数 ==========
 
-    function getBurnStatus() external view returns (uint256 _burnCount, uint256 _nextBurnTime, bool _canBurn) {
+    function getBurnStatus()
+        external
+        view
+        returns (uint256 _burnCount, uint256 _nextBurnTime, bool _canBurn)
+    {
         _burnCount = burnCount;
         _nextBurnTime = lastBurnTime + BURN_INTERVAL;
         _canBurn = burnCount < 10 && block.timestamp >= _nextBurnTime;
     }
 
-    function getPrivateSaleStatus() external view returns (uint256 sold, uint256 remaining, bool enabled) {
+    function getPrivateSaleStatus()
+        external
+        view
+        returns (uint256 sold, uint256 remaining, bool enabled)
+    {
         sold = privateSaleSold;
         remaining = PRIVATE_SALE_MAX - privateSaleSold;
         enabled = privateSaleEnabled;
     }
 }
-

@@ -276,6 +276,16 @@ contract LPDistributor is Ownable {
     }
 
     /**
+     * @dev 返回用户当前待解锁分红(包含本轮未结算增量)
+     */
+    function getPendingReward(address user) external view returns (uint256) {
+        uint256 jmbBalance = stakedLP[user];
+        if (jmbBalance == 0) return pendingReward[user];
+        uint256 reward = (jmbBalance * (accBNBPerJMB - userAccBNBPerJMB[user])) / 1e18;
+        return pendingReward[user] + reward;
+    }
+
+    /**
      * @dev 紧急提取BNB(仅owner)
      */
     function emergencyWithdraw() external onlyOwner {
