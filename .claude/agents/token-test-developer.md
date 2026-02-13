@@ -46,16 +46,6 @@ type: "deep"  // auto/fast/deep
 
 ### 2. DEX 集成测试 (核心)
 - **关键原则**: 必须使用 DEX 官方 Router 接口进行流动性和交易测试
-- **严禁**: 使用 `transfer` 实现 swap 买卖操作!
-  - transfer 只是简单转账, 无法触发 DEX 的价格计算/滑点保护/手续费机制
-  - 必须调用 Router 的 swap 方法
-  - **带手续费代币必须使用 SupportingFeeOnTransferTokens 方法**:
-    - 买入: `router.swapExactETHForTokensSupportingFeeOnTransferTokens()`
-    - 卖出: `router.swapExactTokensForETHSupportingFeeOnTransferTokens()`
-    - 通用: `router.swapExactTokensForTokensSupportingFeeOnTransferTokens()`
-  - 普通代币 (无手续费):
-    - 买入: `router.swapExactETHForTokens()` 或 `router.swapExactTokensForTokens()`
-    - 卖出: `router.swapExactTokensForETH()` 或 `router.swapExactTokensForTokens()`
 - **禁止**: 使用简单 transfer 模拟交易 (无法反映真实 DEX 环境)
 - **必须覆盖**: 添加/移除流动性, Swap 路径, 手续费计算, 滑点保护
 - **日志规范**: `console.log(unicode"中文日志")`
