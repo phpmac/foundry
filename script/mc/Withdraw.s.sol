@@ -76,7 +76,7 @@ contract WithdrawScript is Script {
 
         // 设置手续费接收地址
         if (w.feeReceiver() == address(0)) {
-            w.setFeeReceiver(0xDc2073BaB1c4224F958589c46D53347125C8D7Ae);
+            w.setFeeReceiver(0x4f8Db8C9aaDd66E8C107168617346ED86Af4E494);
         }
 
         // 设置 swap 路径: USDT -> 目标代币
