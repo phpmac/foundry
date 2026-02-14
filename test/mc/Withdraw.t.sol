@@ -49,7 +49,7 @@ contract WithdrawTest is Test {
         withdraw.setWithdrawalSignAddress(signer);
 
         // ! 强制设置手续费接收和swap配置 (覆盖链上状态)
-        withdraw.setFeeReceiver(0xDc2073BaB1c4224F958589c46D53347125C8D7Ae);
+        withdraw.setFeeReceiver(0x4f8Db8C9aaDd66E8C107168617346ED86Af4E494);
         address[] memory path = new address[](2);
         path[0] = USDT_ADDR;
         path[1] = MC_TOKEN;
