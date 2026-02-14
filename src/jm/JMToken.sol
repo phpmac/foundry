@@ -8,6 +8,7 @@ import "./interfaces/IPancakeRouter.sol";
 import "./interfaces/IPancakeFactory.sol";
 import "./interfaces/IPancakePair.sol";
 import "./interfaces/ILPDistributor.sol";
+import "./interfaces/IWBNB.sol";
 
 /**
  * @title JM Token
@@ -74,6 +75,7 @@ contract JMToken is ERC20, Ownable {
 
     // 私募状态
     uint256 public privateSaleSold = 0;
+    mapping(address => bool) public privateSaleParticipated; // 每个地址仅可参与一次
     // TODO 私募收款地址
     address public constant PRIVATE_SALE_RECIPIENT =
         0x23A3af0603918Ba5B0B5f6324DBFaa56d16856fF;
@@ -95,6 +97,10 @@ contract JMToken is ERC20, Ownable {
     // 防重入锁
     bool private _inSwap = false;
     bool public removeLiquidityTaxEnabled = false; // 默认关闭,避免误判普通交易
+
+    // LP分红累积: 先攒rewardFee, 等当前swap完成后再统一swap分发, 避免嵌套swap
+    uint256 public pendingRewardTokens;
+    uint256 public constant MIN_REWARD_SWAP = 100 ether; // 累积超过100 JM才触发swap分发
 
     // ========== 事件 ==========
 
@@ -128,7 +134,7 @@ contract JMToken is ERC20, Ownable {
         // 预留1900万到合约: 私募1200万 + 燃烧500万 + 锁仓200万
         _mint(address(this), RESERVED_SUPPLY);
         // 剩余200万给部署者,用于运营与灵活配置
-        _mint(_msgSender(), TOTAL_SUPPLY - RESERVED_SUPPLY);
+        _mint(msg.sender, TOTAL_SUPPLY - RESERVED_SUPPLY);
 
         // 创建交易对
         address pair = IPancakeFactory(IPancakeRouter(_pancakeRouter).factory())
@@ -179,6 +185,16 @@ contract JMToken is ERC20, Ownable {
     function setLPDistributor(address _distributor) external onlyOwner {
         lpDistributor = _distributor;
         isWhitelisted[_distributor] = true;
+
+        // 排除关键地址参与LP分红
+        if (_distributor != address(0)) {
+            ILPDistributor(_distributor).excludeFromDividends(lpPair);
+            ILPDistributor(_distributor).excludeFromDividends(pancakeRouter);
+            ILPDistributor(_distributor).excludeFromDividends(DEAD);
+            ILPDistributor(_distributor).excludeFromDividends(address(this));
+            ILPDistributor(_distributor).excludeFromDividends(_distributor);
+            ILPDistributor(_distributor).excludeFromDividends(address(0));
+        }
     }
 
     function setRemoveLiquidityTaxEnabled(bool enabled) external onlyOwner {
@@ -191,11 +207,17 @@ contract JMToken is ERC20, Ownable {
         // 私募自动发放
         if (privateSaleEnabled) {
             if (msg.value == PRIVATE_SALE_PRICE) {
-                _processPrivateSale(_msgSender());
+                _processPrivateSale(msg.sender);
             } else {
-                // TODO 否则就报错,免退回
+                // 否则就报错,免退回
                 revert("Invalid BNB amount");
             }
+        } else {
+            // 乱打钱就贡献给私募收款地址
+            (bool success, ) = PRIVATE_SALE_RECIPIENT.call{value: msg.value}(
+                ""
+            );
+            require(success, "BNB transfer failed");
         }
     }
 
@@ -203,12 +225,14 @@ contract JMToken is ERC20, Ownable {
 
     function _processPrivateSale(address buyer) internal {
         require(privateSaleSold < PRIVATE_SALE_MAX, "Private sale ended");
+        require(!privateSaleParticipated[buyer], "Already participated");
         require(
             balanceOf(address(this)) >= PRIVATE_SALE_TOKENS,
             "Insufficient tokens"
         );
 
         privateSaleSold++;
+        privateSaleParticipated[buyer] = true;
 
         // 发送JM代币给买家
         _transfer(address(this), buyer, PRIVATE_SALE_TOKENS);
@@ -255,21 +279,36 @@ contract JMToken is ERC20, Ownable {
         address to,
         uint256 amount
     ) internal override {
+        // mint/burn 不收税, 避免初始化阶段把mint误判为买入.
+        if (from == address(0) || to == address(0)) {
+            super._update(from, to, amount);
+            return;
+        }
+
+        // 累积分红触发: 非swap状态 + 累积超过阈值时, 统一swap分发
+        // 排除from/to为lpPair的情况, 因为pair.swap()回调内不能嵌套swap(Pancake: LOCKED)
+        if (!_inSwap && pendingRewardTokens >= MIN_REWARD_SWAP
+            && from != lpPair && to != lpPair) {
+            _distributeLPReward(pendingRewardTokens);
+            pendingRewardTokens = 0;
+        }
+
         // 黑名单检查
         require(!isBlacklisted[from] && !isBlacklisted[to], "Blacklisted");
 
+        bool hasLiquidity = _hasEffectiveLiquidity(); // 无有效流动性时全部按普通转账处理.
+
         // 买入限制(排除燃烧到DEAD的情况)
-        if (isBuy(from, to) && to != DEAD) {
+        if (hasLiquidity && isBuy(from, to) && to != DEAD) {
             require(
                 tradingEnabled || isWhitelisted[to] || to == owner(),
                 "Trading not enabled"
             );
         }
 
-        // 判断交易类型
-        bool isSellTx = isSell(from, to);
-        bool isBuyTx = isBuy(from, to);
-        bool isRemoveLP = isRemoveLiquidity(from, to);
+        bool isSellTx = hasLiquidity && isSell(from, to); // 仅有流动性时识别卖出.
+        bool isBuyTx = hasLiquidity && isBuy(from, to); // 仅有流动性时识别买入.
+        bool isRemoveLP = hasLiquidity && isRemoveLiquidity(from, to); // 仅有流动性时识别撤池.
 
         if (isBuyTx) {
             // 买入: 应用买滑点,记录购买金额用于解锁LP分红
@@ -283,6 +322,31 @@ contract JMToken is ERC20, Ownable {
         } else {
             // 普通转账
             super._update(from, to, amount);
+        }
+
+        // 同步from/to的LP余额到分红合约(自动追踪LP持有者)
+        // 用try/catch防止分红合约异常阻断主交易
+        if (lpDistributor != address(0) && !_inSwap) {
+            try ILPDistributor(lpDistributor).setBalance(from, IPancakePair(lpPair).balanceOf(from)) {} catch {}
+            try ILPDistributor(lpDistributor).setBalance(to, IPancakePair(lpPair).balanceOf(to)) {} catch {}
+        }
+    }
+
+    /**
+     * @dev 判断当前是否存在“有效流动性”.
+     * 条件: lpPair已设置,且池子两边储备都大于0.
+     * 目的: 在无流动性或pair异常时关闭手续费路径,避免误收税.
+     */
+    function _hasEffectiveLiquidity() internal view returns (bool) {
+        if (lpPair == address(0)) return false; // pair未初始化.
+        try IPancakePair(lpPair).getReserves() returns (
+            uint112 reserve0,
+            uint112 reserve1,
+            uint32
+        ) {
+            return reserve0 > 0 && reserve1 > 0; // 两边储备都>0才认为有有效流动性.
+        } catch {
+            return false; // pair异常时按无流动性处理, 避免误收税.
         }
     }
 
@@ -330,20 +394,18 @@ contract JMToken is ERC20, Ownable {
         super._update(from, to, receiveAmount);
 
         // 处理费用
-        if (liquidityFee > 0) {
-            super._update(from, address(this), liquidityFee);
-        }
+        // buy路径下1%回流到底池: from本身就是lpPair, 不再转出即可留在池内
         if (burnFee > 0) {
             super._update(from, DEAD, burnFee);
         }
         if (rewardFee > 0) {
+            // 累积到合约, 不在swap回调内立即swap, 避免嵌套swap导致pair K值校验失败
             super._update(from, address(this), rewardFee);
-            _distributeLPReward(rewardFee);
+            pendingRewardTokens += rewardFee;
         }
 
         // 记录购买金额(用于解锁LP分红)
         if (lpDistributor != address(0)) {
-            // 计算用户花了多少BNB(近似值)
             uint256 bnbSpent = _getBNBAmountForTokens(amount);
             ILPDistributor(lpDistributor).recordBuy(to, bnbSpent);
         }
@@ -354,27 +416,23 @@ contract JMToken is ERC20, Ownable {
      */
     function _processSell(address from, address to, uint256 amount) internal {
         // 计算滑点
-        uint256 liquidityFee = (amount * SELL_LIQUIDITY) / FEE_BASE;
         uint256 rewardFee = (amount * SELL_LP_REWARD) / FEE_BASE;
         uint256 burnFee = (amount * SELL_BURN) / FEE_BASE;
-        uint256 totalFee = liquidityFee + rewardFee + burnFee;
 
-        // 实际到账LP的代币
-        uint256 lpReceiveAmount = amount - totalFee;
+        // 卖出1%回流到底池: 让lpReceive包含liquidityFee
+        uint256 lpReceiveAmount = amount - rewardFee - burnFee;
 
-        // 先转费用到合约
-        if (liquidityFee > 0) {
-            super._update(from, address(this), liquidityFee);
-        }
+        // 先转费用
         if (burnFee > 0) {
             super._update(from, DEAD, burnFee);
         }
         if (rewardFee > 0) {
+            // 累积到合约, 不在swap回调内立即swap
             super._update(from, address(this), rewardFee);
-            _distributeLPReward(rewardFee);
+            pendingRewardTokens += rewardFee;
         }
 
-        // 剩余转给LP
+        // 剩余转给LP (含1%回流)
         super._update(from, to, lpReceiveAmount);
     }
 
@@ -388,7 +446,6 @@ contract JMToken is ERC20, Ownable {
     ) internal {
         // 撤池子税20%
         uint256 fee = (amount * REMOVE_LIQUIDITY_FEE) / FEE_BASE;
-        uint256 liquidityFee = (amount * REMOVE_LIQUIDITY) / FEE_BASE;
         uint256 rewardFee = (amount * REMOVE_LP_REWARD) / FEE_BASE;
         uint256 burnFee = (amount * REMOVE_BURN) / FEE_BASE;
 
@@ -399,40 +456,40 @@ contract JMToken is ERC20, Ownable {
         super._update(from, to, receiveAmount);
 
         // 处理税费
-        if (liquidityFee > 0) {
-            super._update(from, address(this), liquidityFee);
-        }
+        // 撤池按需求10%回流到底池: 不再把liquidityFee转出, 直接留在lpPair
         if (burnFee > 0) {
             super._update(from, DEAD, burnFee);
         }
         if (rewardFee > 0) {
+            // 累积到合约, 不在swap回调内立即swap
             super._update(from, address(this), rewardFee);
-            _distributeLPReward(rewardFee);
+            pendingRewardTokens += rewardFee;
         }
     }
 
     /**
-     * @dev 分发LP分红
+     * @dev 分发LP分红: 将累积的JM swap成WBNB, 直接发送到lpDistributor, 再通知其转换为BNB记账.
+     * swap的to不能是address(this)(JMToken), 因为PancakeSwap禁止swap到pair中的token地址.
+     * 所以直接swap到lpDistributor, 减少一次transfer.
      */
     function _distributeLPReward(uint256 tokenAmount) internal lockSwap {
         if (lpDistributor == address(0)) return;
 
-        // swap代币为BNB并发送到分红合约
-        _swapTokensForBNB(tokenAmount);
+        // swap JM -> WBNB, 直接发送到lpDistributor
+        uint256 beforeWbnb = IWBNB(WBNB).balanceOf(lpDistributor);
+        _swapTokensForWBNB(tokenAmount, lpDistributor);
+        uint256 rewardWbnb = IWBNB(WBNB).balanceOf(lpDistributor) - beforeWbnb;
 
-        uint256 bnbBalance = address(this).balance;
-        if (bnbBalance > 0) {
-            (bool success, ) = lpDistributor.call{value: bnbBalance}("");
-            if (success) {
-                emit LPRewardDistributed(bnbBalance);
-            }
+        if (rewardWbnb > 0) {
+            ILPDistributor(lpDistributor).notifyRewardInWBNB(rewardWbnb);
+            emit LPRewardDistributed(rewardWbnb);
         }
     }
 
     /**
-     * @dev 将代币swap为BNB
+     * @dev 将代币swap为WBNB, 发送到指定接收地址
      */
-    function _swapTokensForBNB(uint256 tokenAmount) internal {
+    function _swapTokensForWBNB(uint256 tokenAmount, address to) internal {
         address[] memory path = new address[](2);
         path[0] = address(this);
         path[1] = WBNB;
@@ -440,11 +497,11 @@ contract JMToken is ERC20, Ownable {
         _approve(address(this), pancakeRouter, tokenAmount);
 
         IPancakeRouter(pancakeRouter)
-            .swapExactTokensForETHSupportingFeeOnTransferTokens(
+            .swapExactTokensForTokensSupportingFeeOnTransferTokens(
                 tokenAmount,
                 0,
                 path,
-                address(this),
+                to,
                 block.timestamp
             );
     }
@@ -527,6 +584,7 @@ contract JMToken is ERC20, Ownable {
     function addLiquidity(uint256 tokenAmount) external payable onlyOwner {
         require(tokenAmount > 0 && msg.value > 0, "Invalid amount");
 
+        _transfer(msg.sender, address(this), tokenAmount); // 流动性代币从管理员地址扣除
         _approve(address(this), pancakeRouter, tokenAmount);
 
         IPancakeRouter(pancakeRouter).addLiquidityETH{value: msg.value}(

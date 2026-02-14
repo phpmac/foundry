@@ -3,7 +3,6 @@ pragma solidity ^0.8.20;
 
 import "forge-std/Script.sol";
 import "../../src/jm/JMToken.sol";
-import "../../src/jm/JMBToken.sol";
 import "../../src/jm/LPDistributor.sol";
 
 /**
@@ -12,9 +11,8 @@ import "../../src/jm/LPDistributor.sol";
  *
  * 部署流程:
  * 1. 部署 JMToken
- * 2. 部署 JMBToken
- * 3. 部署 LPDistributor
- * 4. 配置合约关联
+ * 2. 部署 LPDistributor (内置JMB凭证)
+ * 3. 配置合约关联
  */
 contract DeployJM is Script {
     // BSC主网 PancakeSwap Router
@@ -34,30 +32,24 @@ contract DeployJM is Script {
         console.log("JMToken deployed at:", address(jmToken));
         console.log("LP Pair:", jmToken.lpPair());
 
-        // 2. 部署 JMBToken
-        JMBToken jmbToken = new JMBToken();
-        console.log("JMBToken deployed at:", address(jmbToken));
-
-        // 3. 部署 LPDistributor
+        // 2. 部署 LPDistributor
         LPDistributor lpDistributor = new LPDistributor(
             address(jmToken),
-            jmToken.lpPair(),
-            address(jmbToken)
+            jmToken.lpPair()
         );
         console.log("LPDistributor deployed at:", address(lpDistributor));
 
-        // 4. 配置合约关联
+        // 3. 配置合约关联
         jmToken.setLPDistributor(address(lpDistributor));
-        jmbToken.setMinter(address(lpDistributor));
 
-        // 5. 将代币转入合约用于私募和燃烧
+        // 4. 将代币转入合约用于私募和燃烧
         uint256 privateSaleTotal = 2000 * 6000 ether; // 1200万枚
         uint256 burnTotal = 5_000_000 ether; // 500万枚
         jmToken.transfer(address(jmToken), privateSaleTotal + burnTotal);
 
         console.log(unicode"部署完成!");
         console.log("JMToken:", address(jmToken));
-        console.log("JMBToken:", address(jmbToken));
+        console.log("JMB Voucher is built in LPDistributor");
         console.log("LPDistributor:", address(lpDistributor));
         console.log("LP Pair:", jmToken.lpPair());
 
