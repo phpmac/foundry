@@ -119,6 +119,25 @@ contract LPDistributor is Ownable, IERC20 {
     }
 
     /**
+     * @dev 用户手动同步自己的LP份额
+     * 适用于加LP后份额未立即同步的情况
+     */
+    function syncBalance() external {
+        if (isExcludedFromDividends[msg.sender]) return;
+        uint256 lpBalance = IPancakePair(lpPair).balanceOf(msg.sender);
+
+        uint256 effectiveBalance = lpBalance;
+        if (lpBalance > 0) {
+            uint256 bnbValue = _getLPBNBValue(lpBalance);
+            if (bnbValue < MIN_LP_THRESHOLD) {
+                effectiveBalance = 0;
+            }
+        }
+
+        _setBalance(msg.sender, effectiveBalance);
+    }
+
+    /**
      * @dev 记录用户购买(由JMToken调用), 用于解锁分红
      */
     function recordBuy(address user, uint256 bnbAmount) external {

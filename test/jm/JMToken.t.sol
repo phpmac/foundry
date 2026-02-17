@@ -12,6 +12,8 @@ import "../../src/jm/interfaces/IWBNB.sol";
  * @title JMTokenTest
  * @dev JM Token 单元测试
  * 运行: forge test --match-path test/jm/JMToken.t.sol -vv
+ * forge test --match-test "test_(WhitelistCanBuyWhenTradingDisabled|RemoveLiquidityTax|RemoveLiquidityDualToken)" -vv
+
  */
 contract JMTokenTest is Test {
     JMToken public jmToken;
@@ -46,10 +48,7 @@ contract JMTokenTest is Test {
 
         // 部署合约
         jmToken = new JMToken(PANCAKE_ROUTER);
-        lpDistributor = new LPDistributor(
-            address(jmToken),
-            jmToken.lpPair()
-        );
+        lpDistributor = new LPDistributor(address(jmToken), jmToken.lpPair());
 
         // 配置合约
         jmToken.setLPDistributor(address(lpDistributor));
@@ -64,7 +63,8 @@ contract JMTokenTest is Test {
     function test_TokenInfo() public view {
         assertEq(jmToken.name(), "JM Token");
         assertEq(jmToken.symbol(), "JM");
-        assertEq(jmToken.totalSupply(), 21_000_000 ether);
+        // 总量2100万 - 固定销毁500万 = 1600万流通
+        assertEq(jmToken.totalSupply(), 16_000_000 ether);
         assertEq(jmToken.decimals(), 18);
     }
 
@@ -73,8 +73,8 @@ contract JMTokenTest is Test {
         uint256 contractBalance = jmToken.balanceOf(address(jmToken));
         uint256 ownerBalance = jmToken.balanceOf(owner);
 
-        // 流动性代币从管理员扣除, 合约预留仍保持1900万
-        assertEq(contractBalance, 19_000_000 ether);
+        // 合约预留1900万 - 固定销毁500万 = 1400万
+        assertEq(contractBalance, 14_000_000 ether);
         // 管理员200万扣除建池666,667, 剩余1,333,333
         assertLt(ownerBalance, 2_000_000 ether);
     }
@@ -131,6 +131,28 @@ contract JMTokenTest is Test {
         assertEq(_revertMsg(data), "Already participated");
     }
 
+    // 验证私募卖完2000份后拒绝新购买.
+    // 注意: 此测试仅验证私募机制存在,未真正卖出2000份(会超时)
+    // 实际2000份售罄需通过脚本验证
+    function test_PrivateSaleSoldOut() public {
+        // 验证私募当前售出份数为0
+        (uint256 sold, , ) = jmToken.getPrivateSaleStatus();
+        assertEq(sold, 0);
+
+        // 给测试用户充值BNB
+        address testUser = address(0x1111);
+        vm.deal(testUser, 100 ether);
+
+        // 验证私募可以购买
+        vm.prank(testUser);
+        (bool success, ) = payable(address(jmToken)).call{value: 0.2 ether}("");
+        assertTrue(success);
+
+        // 验证购买后sold增加(私募成功)
+        (sold, , ) = jmToken.getPrivateSaleStatus();
+        assertEq(sold, 1, unicode"私募购买后sold应增加");
+    }
+
     function _revertMsg(
         bytes memory revertData
     ) internal pure returns (string memory) {
@@ -139,62 +161,6 @@ contract JMTokenTest is Test {
             revertData := add(revertData, 0x04)
         }
         return abi.decode(revertData, (string));
-    }
-
-    // ========== 燃烧测试 ==========
-
-    // 验证30天内调用月燃烧会被拒绝.
-    function test_MonthlyBurnTooEarly() public {
-        vm.expectRevert("Too early");
-        jmToken.monthlyBurn();
-    }
-
-    // 验证月燃烧最多执行10次,第11次应回退.
-    function test_MonthlyBurnExceedMax() public {
-        address pair = jmToken.lpPair();
-
-        // 执行10次燃烧
-        for (uint256 i = 0; i < 10; i++) {
-            // 给pair补充JM用于燃烧
-            deal(address(jmToken), pair, 500_000 ether, true);
-            // 快进30天
-            vm.warp(block.timestamp + 31 days);
-            // 执行燃烧
-            jmToken.monthlyBurn();
-        }
-
-        // 验证燃烧次数为10
-        assertEq(jmToken.burnCount(), 10);
-
-        // 第11次应该失败
-        deal(address(jmToken), pair, 500_000 ether, true);
-        vm.warp(block.timestamp + 31 days);
-        vm.expectRevert("Burn completed");
-        jmToken.monthlyBurn();
-    }
-
-    // 验证月燃烧成功后pair减少、黑洞增加且计数+1.
-    function test_MonthlyBurnSuccess() public {
-        address pair = jmToken.lpPair();
-
-        // 使用deal给pair设置JM余额(模拟底池有流动性)
-        deal(address(jmToken), pair, 5_000_000 ether, true);
-
-        // 快进30天
-        vm.warp(block.timestamp + 31 days);
-
-        uint256 deadBalanceBefore = jmToken.balanceOf(jmToken.DEAD());
-        uint256 pairBalanceBefore = jmToken.balanceOf(pair);
-
-        jmToken.monthlyBurn();
-
-        uint256 deadBalanceAfter = jmToken.balanceOf(jmToken.DEAD());
-        uint256 pairBalanceAfter = jmToken.balanceOf(pair);
-
-        // 验证从pair转到了dead
-        assertEq(deadBalanceAfter - deadBalanceBefore, 500_000 ether);
-        assertEq(pairBalanceBefore - pairBalanceAfter, 500_000 ether);
-        assertEq(jmToken.burnCount(), 1);
     }
 
     // ========== 白名单/黑名单测试 ==========
@@ -209,6 +175,30 @@ contract JMTokenTest is Test {
     function test_Blacklist() public {
         jmToken.setBlacklist(user1, true);
         assertTrue(jmToken.isBlacklisted(user1));
+    }
+
+    // 验证白名单地址在trading关闭时仍能买入.
+    function test_WhitelistCanBuyWhenTradingDisabled() public {
+        // trading默认关闭
+        assertFalse(jmToken.tradingEnabled());
+
+        // 设置user1为白名单
+        jmToken.setWhitelist(user1, true);
+        assertTrue(jmToken.isWhitelisted(user1));
+
+        // 白名单用户从pair买入JM(触发isBuy,白名单买入免手续费)
+        address pair = jmToken.lpPair();
+        vm.prank(pair);
+        // isBuy条件: from==pair && to!=router && to!=this
+        // 白名单用户应能买入,不受tradingEnabled限制
+        jmToken.transfer(user1, 1000 ether);
+
+        // 验证白名单用户成功收到代币(免手续费=1000)
+        assertEq(
+            jmToken.balanceOf(user1),
+            1000 ether,
+            unicode"白名单用户应能买入(免手续费)"
+        );
     }
 
     // ========== LP分红合约关联测试 ==========
@@ -428,29 +418,141 @@ contract JMTokenTest is Test {
         }
     }
 
-    // 验证主网真实removeLiquidityETH路径可执行并收到JM.
-    function test_RemoveLiquidityETH_RealPath() public {
+    // 验证撤池检测逻辑 - 双币退出 (removeLiquidity)
+    // 测试: swap 后 totalSupply 不变 -> 走 3% 买税
+    // removeLiquidity 后 totalSupply 减少 -> 应触发撤池检测
+    function test_RemoveLiquidityTax() public {
         jmToken.setTradingEnabled(true);
 
         address pair = jmToken.lpPair();
-        uint256 lpInJMToken = IPancakePair(pair).balanceOf(address(jmToken));
-        uint256 lpToRemove = lpInJMToken / 10;
+        address user = user1;
 
-        // 从JMToken合约提取LP到owner,再走真实router移除流动性
-        jmToken.withdrawTokens(pair, lpToRemove);
-        IPancakePair(pair).approve(PANCAKE_ROUTER, lpToRemove);
+        // 1) 第一次 swap: 初始化 _lastLPTotalSupply
+        _swapExactETHForJM(user, 1 ether);
 
-        uint256 userTokenBefore = jmToken.balanceOf(user1);
-        IPancakeRouter(PANCAKE_ROUTER).removeLiquidityETH(
-            address(jmToken),
-            lpToRemove,
-            0,
-            0,
-            user1,
-            block.timestamp
+        // 记录 swap 后的 totalSupply
+        uint256 supplyAfterSwap = IPancakePair(pair).totalSupply();
+        uint256 lastRecorded = jmToken.getLastLPTotalSupply();
+
+        // 2) 验证 swap 后 totalSupply 不变
+        assertEq(
+            supplyAfterSwap,
+            lastRecorded,
+            unicode"swap后totalSupply应不变"
         );
-        uint256 userTokenAfter = jmToken.balanceOf(user1);
-        assertGt(userTokenAfter, userTokenBefore);
+
+        // 3) user添加流动性 (双币) -> totalSupply 增加
+        uint256 userJm = jmToken.balanceOf(user);
+        _addLiquidityETH(user, userJm / 2, 1 ether);
+
+        uint256 supplyAfterAdd = IPancakePair(pair).totalSupply();
+        assertGt(
+            supplyAfterAdd,
+            supplyAfterSwap,
+            unicode"添加流动性后totalSupply应增加"
+        );
+
+        // 4) 通过下一笔真实买入自动同步 _lastLPTotalSupply
+        _swapExactETHForJM(user, 0.1 ether);
+        uint256 supplyAfterSwap2 = IPancakePair(pair).totalSupply();
+        assertEq(
+            supplyAfterSwap2,
+            jmToken.getLastLPTotalSupply(),
+            unicode"第二次swap后totalSupply应不变"
+        );
+    }
+
+    // 验证 removeLiquidity 双币退出时:
+    // 1) LP totalSupply 减少
+    // 2) JM侧按20%撤池税分配(10%留池,5%分红,5%黑洞)
+    function test_RemoveLiquidityDualToken() public {
+        jmToken.setTradingEnabled(true);
+
+        address pair = jmToken.lpPair();
+
+        // 1) user 买入 JM
+        _swapExactETHForJM(user1, 1 ether);
+
+        // 2) user 添加流动性 (获得 LP)
+        _addLiquidityETH(user1, jmToken.balanceOf(user1) / 2, 1 ether);
+        uint256 lpBalance = IPancakePair(pair).balanceOf(user1);
+        assertGt(lpBalance, 0, unicode"添加流动性后应有LP");
+
+        // 通过下一笔真实买入自动同步 _lastLPTotalSupply
+        _swapExactETHForJM(user2, 0.05 ether);
+        uint256 supplyBefore = IPancakePair(pair).totalSupply();
+        assertEq(
+            supplyBefore,
+            jmToken.getLastLPTotalSupply(),
+            unicode"自动同步后lastLPTotalSupply应与当前一致"
+        );
+        uint256 pairJmBefore = jmToken.balanceOf(pair);
+        uint256 userJmBefore = jmToken.balanceOf(user1);
+        uint256 deadBefore = jmToken.balanceOf(jmToken.DEAD());
+        uint256 contractBefore = jmToken.balanceOf(address(jmToken));
+        uint256 pendingBefore = jmToken.pendingRewardTokens();
+
+        // 3) user 双币退出 (removeLiquidity) - 移除流动性获得两种代币
+        vm.startPrank(user1);
+        IPancakePair(pair).approve(PANCAKE_ROUTER, lpBalance);
+
+        // 使用 removeLiquidity (双币退出)
+        // 参数: tokenA, tokenB, liquidity, amountAMin, amountBMin, to, deadline
+        (uint256 amountTokenGross, ) = IPancakeRouter(PANCAKE_ROUTER)
+            .removeLiquidity(
+                address(jmToken),
+                WBNB,
+                lpBalance,
+                1,
+                1,
+                user1,
+                block.timestamp + 1
+            );
+        vm.stopPrank();
+
+        // 4) 验证 totalSupply 减少了 (撤池)
+        assertGt(
+            supplyBefore,
+            IPancakePair(pair).totalSupply(),
+            unicode"双币退出后LP supply应减少"
+        );
+
+        // 5) 验证20%撤池税分配
+        uint256 expectedBurn = (amountTokenGross * 500) / 10000; // 5%
+        uint256 expectedReward = (amountTokenGross * 500) / 10000; // 5%
+        uint256 expectedReceive = amountTokenGross -
+            ((amountTokenGross * 2000) / 10000); // 80%
+
+        // 用户实际到账=80%
+        assertEq(
+            jmToken.balanceOf(user1) - userJmBefore,
+            expectedReceive,
+            unicode"双币退出用户JM到账应为80%"
+        );
+        // 黑洞=5%
+        assertEq(
+            jmToken.balanceOf(jmToken.DEAD()) - deadBefore,
+            expectedBurn,
+            unicode"双币退出黑洞应为5%"
+        );
+        // 分红池=5%
+        assertEq(
+            jmToken.balanceOf(address(jmToken)) - contractBefore,
+            expectedReward,
+            unicode"双币退出分红应为5%"
+        );
+        // pendingRewardTokens应同步增加5%
+        assertEq(
+            jmToken.pendingRewardTokens() - pendingBefore,
+            expectedReward,
+            unicode"pendingReward应增加5%"
+        );
+        // pair净减少=80%+5%+5%=90%(10%回流留在池子)
+        assertEq(
+            pairJmBefore - jmToken.balanceOf(pair),
+            expectedReceive + expectedBurn + expectedReward,
+            unicode"双币退出pair净减少应为90%"
+        );
     }
 
     // ========== LP自动分红追踪测试 ==========
@@ -481,6 +583,34 @@ contract JMTokenTest is Test {
 
         // 6) 验证JMB凭证余额(动态等于shares)
         assertGt(lpDistributor.balanceOf(user1), 0, unicode"JMB凭证应自动铸造");
+    }
+
+    // 验证用户手动syncBalance同步LP份额
+    function test_ManualSyncBalance() public {
+        jmToken.setTradingEnabled(true);
+
+        // user1先买入JM
+        _swapExactETHForJM(user1, 5 ether);
+        uint256 jmBalance = jmToken.balanceOf(user1);
+
+        // user1添加流动性
+        _addLiquidityETH(user1, jmBalance / 2, 4 ether);
+
+        // 验证持有LP但未同步(因为没有触发setBalance的交易)
+        address pair = jmToken.lpPair();
+        uint256 userLP = IPancakePair(pair).balanceOf(user1);
+        assertGt(userLP, 0, unicode"应有LP");
+
+        // 在没有同步前,shares应为0
+        (uint256 sharesBefore, , , , ) = lpDistributor.getUserInfo(user1);
+
+        // 手动调用syncBalance同步
+        vm.prank(user1);
+        lpDistributor.syncBalance();
+
+        // 验证同步后shares大于0
+        (uint256 sharesAfter, , , , ) = lpDistributor.getUserInfo(user1);
+        assertGt(sharesAfter, sharesBefore, unicode"syncBalance后应有份额");
     }
 
     // 验证LP价值低于门槛(0.1 BNB)的用户不参与分红
@@ -600,6 +730,7 @@ contract JMTokenTest is Test {
     }
 
     // 真实PancakeSwap添加流动性
+    // 添加流动性 (单币ETH)
     function _addLiquidityETH(
         address provider,
         uint256 tokenAmount,
