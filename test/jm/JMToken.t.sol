@@ -13,7 +13,6 @@ import "../../src/jm/interfaces/IWBNB.sol";
  * @dev JM Token 单元测试
  * 运行: forge test --match-path test/jm/JMToken.t.sol -vv
  * forge test --match-test "test_(WhitelistCanBuyWhenTradingDisabled|RemoveLiquidityTax|RemoveLiquidityDualToken)" -vv
-
  */
 contract JMTokenTest is Test {
     JMToken public jmToken;
