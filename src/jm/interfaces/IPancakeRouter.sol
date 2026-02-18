@@ -38,6 +38,16 @@ interface IPancakeRouter {
         uint256 deadline
     ) external returns (uint256 amountA, uint256 amountB);
 
+    // 移除流动性(ETH) - 支持转账扣费代币
+    function removeLiquidityETHSupportingFeeOnTransferTokens(
+        address token,
+        uint256 liquidity,
+        uint256 amountTokenMin,
+        uint256 amountETHMin,
+        address to,
+        uint256 deadline
+    ) external returns (uint256 amountETH);
+
     // 买 - ETH 换代币
     function swapExactETHForTokensSupportingFeeOnTransferTokens(
         uint256 amountOutMin,

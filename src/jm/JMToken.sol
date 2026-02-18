@@ -91,8 +91,6 @@ contract JMToken is ERC20, Ownable {
     // 防重入锁
     bool private _inSwap = false;
     bool public removeLiquidityTaxEnabled = true; // 默认开启,撤池子收20%手续费
-    // 记录上次检测的 LP totalSupply,用于判断撤池
-    uint256 private _lastLPTotalSupply;
 
     // LP分红累积: 先攒rewardFee, 等当前swap完成后再统一swap分发, 避免嵌套swap
     uint256 public pendingRewardTokens;
@@ -141,11 +139,6 @@ contract JMToken is ERC20, Ownable {
 
         exchangeLockUnlockTime = block.timestamp + LOCK_PERIOD;
 
-        // 初始化 LP totalSupply 记录
-        if (lpPair != address(0)) {
-            _lastLPTotalSupply = IPancakePair(lpPair).totalSupply();
-        }
-
         // 添加合约本身到白名单
         isWhitelisted[address(this)] = true;
         isWhitelisted[msg.sender] = true;
@@ -185,11 +178,6 @@ contract JMToken is ERC20, Ownable {
     function setLPDistributor(address _distributor) external onlyOwner {
         lpDistributor = _distributor;
         isWhitelisted[_distributor] = true;
-
-        // 初始化 LP totalSupply 记录
-        if (lpPair != address(0)) {
-            _lastLPTotalSupply = IPancakePair(lpPair).totalSupply();
-        }
 
         // 排除关键地址参与LP分红
         if (_distributor != address(0)) {
@@ -260,7 +248,7 @@ contract JMToken is ERC20, Ownable {
         address to,
         uint256 amount
     ) internal override {
-        // mint/burn 不收税, 避免初始化阶段把mint误判为买入.
+        // mint/burn 不收税
         if (from == address(0) || to == address(0)) {
             super._update(from, to, amount);
             return;
@@ -278,64 +266,40 @@ contract JMToken is ERC20, Ownable {
             pendingRewardTokens = 0;
         }
 
-        // 黑名单检查
         require(!isBlacklisted[from] && !isBlacklisted[to], "Blacklisted");
 
-        bool hasLiquidity = _hasEffectiveLiquidity(); // 无有效流动性时全部按普通转账处理.
+        bool hasLiquidity = _hasEffectiveLiquidity();
 
-        // 买入限制(排除燃烧到DEAD的情况)
-        if (hasLiquidity && isBuy(from, to) && to != DEAD) {
-            require(
-                tradingEnabled || isWhitelisted[to] || to == owner(),
-                "Trading not enabled"
-            );
-        }
-
-        // 关键: 撤池检测需要用 totalSupply 变化来判断
-        // 撤池检测: pair 转出代币时(from=pair),检查 totalSupply 是否减少
-        // removeLiquidity 调用 pair.burn() 会销毁 LP token,导致 totalSupply 减少
-        // swap 不会改变 totalSupply
-        bool isRemoveLP = false;
-        if (hasLiquidity && from == lpPair && to != lpPair && to != address(this)) {
-            uint256 currentSupply = IPancakePair(lpPair).totalSupply();
-            // 如果 totalSupply 减少了,说明是 removeLiquidity(撤池)
-            // 如果 totalSupply 不变,说明是 swap(买入)
-            isRemoveLP = removeLiquidityTaxEnabled && currentSupply < _lastLPTotalSupply;
-            // 无论是否撤池,都要更新记录(保持最新状态)
-            _lastLPTotalSupply = currentSupply;
-        }
-
-        bool isSellTx = hasLiquidity && isSell(from, to); // 仅有流动性时识别卖出.
-        bool isBuyTx = hasLiquidity && isBuy(from, to); // 仅有流动性时识别买入.
-
-        // 撤池与买入互斥: 如果检测到撤池,则不走买入逻辑
-        if (isRemoveLP) {
-            isBuyTx = false;
-        }
-
-        if (isBuyTx && isWhitelisted[to]) {
-            // 白名单买入免手续费, 但仍计入买入金额用于分红解锁
-            super._update(from, to, amount);
-            if (lpDistributor != address(0)) {
-                uint256 bnbSpent = _getBNBAmountForTokens(amount);
-                ILPDistributor(lpDistributor).recordBuy(to, bnbSpent);
+        // 标准税币三分支: pair发出(买入/撤池) | 发往pair(卖出) | 普通转账
+        if (
+            hasLiquidity &&
+            from == lpPair &&
+            to != lpPair &&
+            to != address(this)
+        ) {
+            // === pair 发出代币: 先 heuristic 判断撤池, 否则买入 ===
+            if (_isRemoveLiquidity()) {
+                if (removeLiquidityTaxEnabled) {
+                    _processRemoveLiquidity(from, to, amount);
+                } else {
+                    _handleBuy(from, to, amount);
+                }
+            } else {
+                if (to != DEAD) {
+                    require(
+                        tradingEnabled || isWhitelisted[to] || to == owner(),
+                        "Trading not enabled"
+                    );
+                }
+                _handleBuy(from, to, amount);
             }
-        } else if (isBuyTx) {
-            // 买入: 应用买滑点,记录购买金额用于解锁LP分红
-            _processBuy(from, to, amount);
-        } else if (isSellTx) {
-            // 卖出: 应用卖滑点
+        } else if (hasLiquidity && isSell(from, to)) {
             _processSell(from, to, amount);
-        } else if (isRemoveLP) {
-            // 撤池子: 应用撤池子税
-            _processRemoveLiquidity(from, to, amount);
         } else {
-            // 普通转账
             super._update(from, to, amount);
         }
 
         // 同步from/to的LP余额到分红合约(自动追踪LP持有者)
-        // 用try/catch防止分红合约异常阻断主交易
         if (lpDistributor != address(0) && !_inSwap) {
             try
                 ILPDistributor(lpDistributor).setBalance(
@@ -353,20 +317,35 @@ contract JMToken is ERC20, Ownable {
     }
 
     /**
-     * @dev 判断当前是否存在“有效流动性”.
+     * @dev 买入处理: 白名单免手续费, 否则走_processBuy收3%
+     */
+    function _handleBuy(address from, address to, uint256 amount) internal {
+        if (isWhitelisted[to]) {
+            super._update(from, to, amount);
+            if (lpDistributor != address(0)) {
+                uint256 bnbSpent = _getBNBAmountForTokens(amount);
+                ILPDistributor(lpDistributor).recordBuy(to, bnbSpent);
+            }
+        } else {
+            _processBuy(from, to, amount);
+        }
+    }
+
+    /**
+     * @dev 判断当前是否存在"有效流动性".
      * 条件: lpPair已设置,且池子两边储备都大于0.
      * 目的: 在无流动性或pair异常时关闭手续费路径,避免误收税.
      */
     function _hasEffectiveLiquidity() internal view returns (bool) {
-        if (lpPair == address(0)) return false; // pair未初始化.
+        if (lpPair == address(0)) return false;
         try IPancakePair(lpPair).getReserves() returns (
             uint112 reserve0,
             uint112 reserve1,
             uint32
         ) {
-            return reserve0 > 0 && reserve1 > 0; // 两边储备都>0才认为有有效流动性.
+            return reserve0 > 0 && reserve1 > 0;
         } catch {
-            return false; // pair异常时按无流动性处理, 避免误收税.
+            return false;
         }
     }
 
@@ -385,63 +364,51 @@ contract JMToken is ERC20, Ownable {
     }
 
     /**
-     * @dev 判断是否为撤池子(通过 totalSupply 变化检测)
-     * 注意: 此函数需要在 _update 中结合 _lastLPTotalSupply 比较才能正确判断
-     * 单独调用时只能返回基于静态条件的初步判断
+     * @dev 判断是否为撤池子(通过 reserve vs balance heuristic)
      */
     function isRemoveLiquidity(
         address from,
         address to
     ) public view returns (bool) {
-        if (!removeLiquidityTaxEnabled) return false;
-        // pair 转出代币给用户 (from=pair, to=user) - 需要结合 totalSupply 变化判断
-        // 撤池: from == lpPair, to != lpPair, totalSupply 减少
-        // 买入: from == lpPair, to != lpPair, totalSupply 不变
-        return from == lpPair && to != lpPair && to != pancakeRouter && to != address(this);
+        if (from != lpPair || to == lpPair || to == address(this)) return false;
+        return _isRemoveLiquidity();
     }
 
     /**
-     * @dev 获取 pair 当前 totalSupply(用于外部检测)
+     * @dev 撤池检测核心逻辑:
+     * removeLiquidity期间, pair的另一币种balance会小于或等于旧reserve;
+     * 正常买入期间, 用户输入的另一币种先进入pair, balance通常大于旧reserve.
      */
-    function getLPTotalSupply() external view returns (uint256) {
-        return IPancakePair(lpPair).totalSupply();
-    }
-
-    /**
-     * @dev 获取上次记录的 LP totalSupply(用于调试)
-     */
-    function getLastLPTotalSupply() external view returns (uint256) {
-        return _lastLPTotalSupply;
+    function _isRemoveLiquidity() internal view returns (bool) {
+        (uint112 r0, uint112 r1, ) = IPancakePair(lpPair).getReserves();
+        uint256 wbnbReserve = IPancakePair(lpPair).token0() == address(this)
+            ? uint256(r1)
+            : uint256(r0);
+        return wbnbReserve >= IERC20(WBNB).balanceOf(lpPair);
     }
 
     /**
      * @dev 处理买入
      */
     function _processBuy(address from, address to, uint256 amount) internal {
-        // 计算滑点
         uint256 liquidityFee = (amount * BUY_LIQUIDITY) / FEE_BASE;
         uint256 rewardFee = (amount * BUY_LP_REWARD) / FEE_BASE;
         uint256 burnFee = (amount * BUY_BURN) / FEE_BASE;
         uint256 totalFee = liquidityFee + rewardFee + burnFee;
 
-        // 实际到账
         uint256 receiveAmount = amount - totalFee;
 
-        // 执行转账
         super._update(from, to, receiveAmount);
 
-        // 处理费用
         // buy路径下1%回流到底池: from本身就是lpPair, 不再转出即可留在池内
         if (burnFee > 0) {
             super._update(from, DEAD, burnFee);
         }
         if (rewardFee > 0) {
-            // 累积到合约, 不在swap回调内立即swap, 避免嵌套swap导致pair K值校验失败
             super._update(from, address(this), rewardFee);
             pendingRewardTokens += rewardFee;
         }
 
-        // 记录购买金额(用于解锁LP分红)
         if (lpDistributor != address(0)) {
             uint256 bnbSpent = _getBNBAmountForTokens(amount);
             ILPDistributor(lpDistributor).recordBuy(to, bnbSpent);
@@ -452,19 +419,16 @@ contract JMToken is ERC20, Ownable {
      * @dev 处理卖出
      */
     function _processSell(address from, address to, uint256 amount) internal {
-        // 计算滑点
         uint256 rewardFee = (amount * SELL_LP_REWARD) / FEE_BASE;
         uint256 burnFee = (amount * SELL_BURN) / FEE_BASE;
 
         // 卖出1%回流到底池: 让lpReceive包含liquidityFee
         uint256 lpReceiveAmount = amount - rewardFee - burnFee;
 
-        // 先转费用
         if (burnFee > 0) {
             super._update(from, DEAD, burnFee);
         }
         if (rewardFee > 0) {
-            // 累积到合约, 不在swap回调内立即swap
             super._update(from, address(this), rewardFee);
             pendingRewardTokens += rewardFee;
         }
@@ -486,19 +450,15 @@ contract JMToken is ERC20, Ownable {
         uint256 rewardFee = (amount * REMOVE_LP_REWARD) / FEE_BASE;
         uint256 burnFee = (amount * REMOVE_BURN) / FEE_BASE;
 
-        // 实际到账
         uint256 receiveAmount = amount - fee;
 
-        // 执行转账
         super._update(from, to, receiveAmount);
 
-        // 处理税费
         // 撤池按需求10%回流到底池: 不再把liquidityFee转出, 直接留在lpPair
         if (burnFee > 0) {
             super._update(from, DEAD, burnFee);
         }
         if (rewardFee > 0) {
-            // 累积到合约, 不在swap回调内立即swap
             super._update(from, address(this), rewardFee);
             pendingRewardTokens += rewardFee;
         }
@@ -512,7 +472,6 @@ contract JMToken is ERC20, Ownable {
     function _distributeLPReward(uint256 tokenAmount) internal lockSwap {
         if (lpDistributor == address(0)) return;
 
-        // swap JM -> WBNB, 直接发送到lpDistributor
         uint256 beforeWbnb = IWBNB(WBNB).balanceOf(lpDistributor);
         _swapTokensForWBNB(tokenAmount, lpDistributor);
         uint256 rewardWbnb = IWBNB(WBNB).balanceOf(lpDistributor) - beforeWbnb;
@@ -554,11 +513,9 @@ contract JMToken is ERC20, Ownable {
 
         address token0 = pair.token0();
         if (token0 == WBNB) {
-            // reserve0是BNB, reserve1是JM
             if (reserve1 == 0) return 0;
             return (tokenAmount * uint256(reserve0)) / uint256(reserve1);
         } else {
-            // reserve0是JM, reserve1是BNB
             if (reserve0 == 0) return 0;
             return (tokenAmount * uint256(reserve1)) / uint256(reserve0);
         }
@@ -618,7 +575,6 @@ contract JMToken is ERC20, Ownable {
     /**
      * @dev 添加流动性(仅owner)
      */
-    // 添加流动性 (单币ETH)
     function addLiquidity(uint256 tokenAmount) external payable onlyOwner {
         require(tokenAmount > 0 && msg.value > 0, "Invalid amount");
 
@@ -634,18 +590,7 @@ contract JMToken is ERC20, Ownable {
             block.timestamp
         );
 
-        // 更新 LP totalSupply 记录
-        _lastLPTotalSupply = IPancakePair(lpPair).totalSupply();
-
         emit LiquidityAdded(tokenAmount, msg.value);
-    }
-
-    /**
-     * @dev 手动同步 LP totalSupply 记录
-     * 适用于通过 router 添加流动性后手动更新状态
-     */
-    function syncLPTotalSupply() external {
-        _lastLPTotalSupply = IPancakePair(lpPair).totalSupply();
     }
 
     /**

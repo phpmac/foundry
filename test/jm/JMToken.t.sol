@@ -12,7 +12,7 @@ import "../../src/jm/interfaces/IWBNB.sol";
  * @title JMTokenTest
  * @dev JM Token 单元测试
  * 运行: forge test --match-path test/jm/JMToken.t.sol -vv
- * forge test --match-test "test_(WhitelistCanBuyWhenTradingDisabled|RemoveLiquidityTax|RemoveLiquidityDualToken)" -vv
+ * forge test --match-test "test_(WhitelistCanBuyWhenTradingDisabled|BuyPathNotMisclassifiedAsRemoveLiquidity|RemoveLiquidityCharges20PercentDirectRouter)" -vv
  */
 contract JMTokenTest is Test {
     JMToken public jmToken;
@@ -185,17 +185,16 @@ contract JMTokenTest is Test {
         jmToken.setWhitelist(user1, true);
         assertTrue(jmToken.isWhitelisted(user1));
 
-        // 白名单用户从pair买入JM(触发isBuy,白名单买入免手续费)
+        // 白名单用户通过真实PancakeSwap买入(trading关闭, 白名单仍可买入且免手续费)
         address pair = jmToken.lpPair();
-        vm.prank(pair);
-        // isBuy条件: from==pair && to!=router && to!=this
-        // 白名单用户应能买入,不受tradingEnabled限制
-        jmToken.transfer(user1, 1000 ether);
+        uint256 pairBefore = jmToken.balanceOf(pair);
+        _swapExactETHForJM(user1, 1 ether);
+        uint256 grossBought = pairBefore - jmToken.balanceOf(pair);
 
-        // 验证白名单用户成功收到代币(免手续费=1000)
+        // 白名单买入免手续费, 到账应等于pair送出的全部JM
         assertEq(
             jmToken.balanceOf(user1),
-            1000 ether,
+            grossBought,
             unicode"白名单用户应能买入(免手续费)"
         );
     }
@@ -417,54 +416,50 @@ contract JMTokenTest is Test {
         }
     }
 
-    // 验证撤池检测逻辑 - 双币退出 (removeLiquidity)
-    // 测试: swap 后 totalSupply 不变 -> 走 3% 买税
-    // removeLiquidity 后 totalSupply 减少 -> 应触发撤池检测
-    function test_RemoveLiquidityTax() public {
+    // 验证撤池检测逻辑:
+    // 普通买入应走3%买税, 不应误判为20%撤池税.
+    function test_BuyPathNotMisclassifiedAsRemoveLiquidity() public {
         jmToken.setTradingEnabled(true);
 
         address pair = jmToken.lpPair();
-        address user = user1;
+        uint256 pairBefore = jmToken.balanceOf(pair);
+        uint256 userBefore = jmToken.balanceOf(user1);
+        uint256 deadBefore = jmToken.balanceOf(jmToken.DEAD());
+        uint256 contractBefore = jmToken.balanceOf(address(jmToken));
+        uint256 pendingBefore = jmToken.pendingRewardTokens();
 
-        // 1) 第一次 swap: 初始化 _lastLPTotalSupply
-        _swapExactETHForJM(user, 1 ether);
+        _swapExactETHForJM(user1, 1 ether);
 
-        // 记录 swap 后的 totalSupply
-        uint256 supplyAfterSwap = IPancakePair(pair).totalSupply();
-        uint256 lastRecorded = jmToken.getLastLPTotalSupply();
+        uint256 grossBought = pairBefore - jmToken.balanceOf(pair);
+        uint256 expectedBurn = (grossBought * 50) / 10000; // 0.5%
+        uint256 expectedReward = (grossBought * 150) / 10000; // 1.5%
+        uint256 expectedReceive = grossBought - ((grossBought * 300) / 10000); // 97%
 
-        // 2) 验证 swap 后 totalSupply 不变
-        assertEq(
-            supplyAfterSwap,
-            lastRecorded,
-            unicode"swap后totalSupply应不变"
+        assertApproxEqAbs(
+            jmToken.balanceOf(user1) - userBefore,
+            expectedReceive,
+            grossBought / 100
         );
-
-        // 3) user添加流动性 (双币) -> totalSupply 增加
-        uint256 userJm = jmToken.balanceOf(user);
-        _addLiquidityETH(user, userJm / 2, 1 ether);
-
-        uint256 supplyAfterAdd = IPancakePair(pair).totalSupply();
-        assertGt(
-            supplyAfterAdd,
-            supplyAfterSwap,
-            unicode"添加流动性后totalSupply应增加"
+        assertApproxEqAbs(
+            jmToken.balanceOf(jmToken.DEAD()) - deadBefore,
+            expectedBurn,
+            grossBought / 100
         );
-
-        // 4) 通过下一笔真实买入自动同步 _lastLPTotalSupply
-        _swapExactETHForJM(user, 0.1 ether);
-        uint256 supplyAfterSwap2 = IPancakePair(pair).totalSupply();
-        assertEq(
-            supplyAfterSwap2,
-            jmToken.getLastLPTotalSupply(),
-            unicode"第二次swap后totalSupply应不变"
+        assertApproxEqAbs(
+            jmToken.balanceOf(address(jmToken)) - contractBefore,
+            expectedReward,
+            grossBought / 100
+        );
+        assertApproxEqAbs(
+            jmToken.pendingRewardTokens() - pendingBefore,
+            expectedReward,
+            grossBought / 100
         );
     }
 
     // 验证 removeLiquidity 双币退出时:
-    // 1) LP totalSupply 减少
-    // 2) JM侧按20%撤池税分配(10%留池,5%分红,5%黑洞)
-    function test_RemoveLiquidityDualToken() public {
+    // JM侧按20%撤池税分配(10%留池,5%分红,5%黑洞)
+    function test_RemoveLiquidityCharges20PercentDirectRouter() public {
         jmToken.setTradingEnabled(true);
 
         address pair = jmToken.lpPair();
@@ -477,14 +472,6 @@ contract JMTokenTest is Test {
         uint256 lpBalance = IPancakePair(pair).balanceOf(user1);
         assertGt(lpBalance, 0, unicode"添加流动性后应有LP");
 
-        // 通过下一笔真实买入自动同步 _lastLPTotalSupply
-        _swapExactETHForJM(user2, 0.05 ether);
-        uint256 supplyBefore = IPancakePair(pair).totalSupply();
-        assertEq(
-            supplyBefore,
-            jmToken.getLastLPTotalSupply(),
-            unicode"自动同步后lastLPTotalSupply应与当前一致"
-        );
         uint256 pairJmBefore = jmToken.balanceOf(pair);
         uint256 userJmBefore = jmToken.balanceOf(user1);
         uint256 deadBefore = jmToken.balanceOf(jmToken.DEAD());
@@ -509,14 +496,7 @@ contract JMTokenTest is Test {
             );
         vm.stopPrank();
 
-        // 4) 验证 totalSupply 减少了 (撤池)
-        assertGt(
-            supplyBefore,
-            IPancakePair(pair).totalSupply(),
-            unicode"双币退出后LP supply应减少"
-        );
-
-        // 5) 验证20%撤池税分配
+        // 4) 验证20%撤池税分配
         uint256 expectedBurn = (amountTokenGross * 500) / 10000; // 5%
         uint256 expectedReward = (amountTokenGross * 500) / 10000; // 5%
         uint256 expectedReceive = amountTokenGross -
@@ -551,6 +531,136 @@ contract JMTokenTest is Test {
             pairJmBefore - jmToken.balanceOf(pair),
             expectedReceive + expectedBurn + expectedReward,
             unicode"双币退出pair净减少应为90%"
+        );
+    }
+
+    // 验证 removeLiquidityETHSupportingFeeOnTransferTokens 路径也收20%撤池税
+    // 这是PancakeSwap前端对BNB池子实际调用的函数(pair -> router -> user)
+    function test_RemoveLiquidityETHSupportingFeeCharges20Percent() public {
+        jmToken.setTradingEnabled(true);
+
+        address pair = jmToken.lpPair();
+
+        // 1) user 买入 JM
+        _swapExactETHForJM(user1, 1 ether);
+
+        // 2) user 添加流动性 (获得 LP)
+        _addLiquidityETH(user1, jmToken.balanceOf(user1) / 2, 1 ether);
+        uint256 lpBalance = IPancakePair(pair).balanceOf(user1);
+        assertGt(lpBalance, 0, unicode"添加流动性后应有LP");
+
+        uint256 userJmBefore = jmToken.balanceOf(user1);
+        uint256 deadBefore = jmToken.balanceOf(jmToken.DEAD());
+
+        // 3) user 通过 removeLiquidityETHSupportingFeeOnTransferTokens 撤池
+        //    真实PancakeSwap UI对BNB池子的调用路径: pair -> router -> user
+        vm.startPrank(user1);
+        IPancakePair(pair).approve(PANCAKE_ROUTER, lpBalance);
+        uint256 amountETH = IPancakeRouter(PANCAKE_ROUTER)
+            .removeLiquidityETHSupportingFeeOnTransferTokens(
+                address(jmToken),
+                lpBalance,
+                1,
+                1,
+                user1,
+                block.timestamp + 1
+            );
+        vm.stopPrank();
+
+        // 4) 验证BNB侧有返回(ETH侧不受JM税影响)
+        assertGt(amountETH, 0, unicode"应返回BNB");
+
+        // 5) 验证JM侧收了20%撤池税
+        //    pair -> router 被扣20%, router用balanceOf转发剩余80%给user
+        //    关系: deadDelta(5%) = userJmDelta(80%) * 5/80 = userJmDelta / 16
+        uint256 userJmDelta = jmToken.balanceOf(user1) - userJmBefore;
+        uint256 deadDelta = jmToken.balanceOf(jmToken.DEAD()) - deadBefore;
+
+        assertGt(userJmDelta, 0, unicode"用户应收到JM(扣税后)");
+        assertGt(deadDelta, 0, unicode"黑洞应收到5%");
+
+        // 黑洞/用户 比例 = 5%/80% = 1/16
+        uint256 expectedBurn = userJmDelta / 16;
+        assertApproxEqAbs(
+            deadDelta,
+            expectedBurn,
+            2,
+            unicode"ETH撤池路径: 黑洞应为用户到账的1/16(5% vs 80%)"
+        );
+    }
+
+    // 验证关闭撤池税后, removeLiquidity不再走20%, 而是回到买入3%路径
+    function test_RemoveLiquidityUsesBuyFeeWhenRemoveTaxDisabled() public {
+        jmToken.setTradingEnabled(true);
+        jmToken.setRemoveLiquidityTaxEnabled(false);
+
+        address pair = jmToken.lpPair();
+
+        // 1) user 买入 JM
+        _swapExactETHForJM(user1, 1 ether);
+
+        // 2) user 添加流动性 (获得 LP)
+        _addLiquidityETH(user1, jmToken.balanceOf(user1) / 2, 1 ether);
+        uint256 lpBalance = IPancakePair(pair).balanceOf(user1);
+        assertGt(lpBalance, 0, unicode"添加流动性后应有LP");
+
+        uint256 pairJmBefore = jmToken.balanceOf(pair);
+        uint256 userJmBefore = jmToken.balanceOf(user1);
+        uint256 deadBefore = jmToken.balanceOf(jmToken.DEAD());
+        uint256 contractBefore = jmToken.balanceOf(address(jmToken));
+        uint256 pendingBefore = jmToken.pendingRewardTokens();
+
+        // 3) 直接走 router.removeLiquidity
+        vm.startPrank(user1);
+        IPancakePair(pair).approve(PANCAKE_ROUTER, lpBalance);
+        (uint256 amountTokenGross, ) = IPancakeRouter(PANCAKE_ROUTER)
+            .removeLiquidity(
+                address(jmToken),
+                WBNB,
+                lpBalance,
+                1,
+                1,
+                user1,
+                block.timestamp + 1
+            );
+        vm.stopPrank();
+
+        // 4) 应按买入3%分配: 1%留池,1.5%分红,0.5%黑洞,用户到账97%
+        uint256 expectedBurn = (amountTokenGross * 50) / 10000; // 0.5%
+        uint256 expectedReward = (amountTokenGross * 150) / 10000; // 1.5%
+        uint256 expectedReceive = amountTokenGross -
+            ((amountTokenGross * 300) / 10000); // 97%
+
+        assertApproxEqAbs(
+            jmToken.balanceOf(user1) - userJmBefore,
+            expectedReceive,
+            1,
+            unicode"关闭撤池税后removeLiquidity用户到账应为97%"
+        );
+        assertApproxEqAbs(
+            jmToken.balanceOf(jmToken.DEAD()) - deadBefore,
+            expectedBurn,
+            1,
+            unicode"关闭撤池税后黑洞应为0.5%"
+        );
+        assertApproxEqAbs(
+            jmToken.balanceOf(address(jmToken)) - contractBefore,
+            expectedReward,
+            1,
+            unicode"关闭撤池税后分红应为1.5%"
+        );
+        assertApproxEqAbs(
+            jmToken.pendingRewardTokens() - pendingBefore,
+            expectedReward,
+            1,
+            unicode"关闭撤池税后pendingReward应增加1.5%"
+        );
+        // pair净减少=97%+0.5%+1.5%=99%(1%回流留在池子)
+        assertApproxEqAbs(
+            pairJmBefore - jmToken.balanceOf(pair),
+            expectedReceive + expectedBurn + expectedReward,
+            1,
+            unicode"关闭撤池税后pair净减少应为99%"
         );
     }
 
