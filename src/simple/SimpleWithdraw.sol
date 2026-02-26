@@ -10,9 +10,6 @@ import {EIP712Upgradeable} from "@openzeppelin/contracts-upgradeable/utils/crypt
  * 提现合约
  * 前端代码参考在 https://github.com/phpmac/laravel/blob/etf2/resources/js/components/WithdrawModal.tsx
  * ! 使用 过期时间+唯一网络id 防止重放攻击
- *
- * 部署流程(可执行todo):
- * 1.提现地址需要approve代币
  */
 contract SimpleWithdraw is AccessControlUpgradeable, EIP712Upgradeable {
     using ECDSA for bytes32;

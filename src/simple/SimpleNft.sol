@@ -7,8 +7,6 @@ import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/acce
 /**
  * 简单的nft
  *
- * 部署流程(可执行todo):
- * 1. 健康检查
  */
 contract SimpleNft is AccessControlUpgradeable, ERC721EnumerableUpgradeable {
     uint256 public id; // 当前id
@@ -50,57 +48,6 @@ contract SimpleNft is AccessControlUpgradeable, ERC721EnumerableUpgradeable {
         allowTestChainId.push(97);
 
         todo();
-    }
-
-    /**
-     * 获取指定地址拥有的所有 NFT
-     * @param _owner 要查询的地址
-     * @return tokenIds 该地址拥有的所有 NFT 的 tokenId 数组
-     */
-    function walletOfOwner(
-        address _owner
-    ) external view returns (uint256[] memory) {
-        uint256 tokenCount = balanceOf(_owner);
-        uint256[] memory tokensId = new uint256[](tokenCount);
-
-        if (tokenCount == 0) {
-            return tokensId;
-        }
-
-        // ! 修复：使用 ERC721Enumerable 的 tokenOfOwnerByIndex 提高效率，避免遍历所有token
-        for (uint256 i = 0; i < tokenCount; i++) {
-            tokensId[i] = tokenOfOwnerByIndex(_owner, i);
-        }
-
-        return tokensId;
-    }
-
-    /**
-     * 获取地址的矿机id
-     * @param owner 地址
-     * @param index 索引
-     * @return tokenIds 矿机id
-     */
-    function getTokenIdsByIndex(
-        address owner,
-        uint256 index
-    ) public view returns (uint256[] memory) {
-        uint256 balance = balanceOf(owner);
-        if (balance == 0) return (new uint256[](0));
-
-        // ! 修复：修正索引逻辑，防止数组越界和逻辑错误
-        uint256 maxReturn = 10; // 最多返回10个
-        uint256 startIndex = index;
-        if (startIndex >= balance) startIndex = 0; // 如果索引超出，从头开始
-
-        uint256 returnCount = balance - startIndex;
-        if (returnCount > maxReturn) returnCount = maxReturn;
-
-        uint256[] memory tokenIds = new uint256[](returnCount);
-        for (uint256 i = 0; i < returnCount; i++) {
-            tokenIds[i] = tokenOfOwnerByIndex(owner, startIndex + i);
-        }
-        return tokenIds;
     }
 
     /**
