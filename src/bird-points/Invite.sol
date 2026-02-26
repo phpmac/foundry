@@ -8,15 +8,6 @@ import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/U
 /**
  * @title Invite
  * @dev 邀请关系管理合约 (可升级)
- *
- * 部署脚本:
- * forge script script/bird-points/DeployInvite.s.sol --rpc-url eni --broadcast
- *
- * 升级脚本:
- * forge script script/bird-points/UpgradeInvite.s.sol --rpc-url eni --broadcast
- *
- * 环境变量:
- * INVITE_PROXY_ADDRESS - 代理合约地址
  */
 contract Invite is IInvite, AccessControlUpgradeable, UUPSUpgradeable {
     bytes32 public constant WHITELIST = keccak256("WHITELIST");

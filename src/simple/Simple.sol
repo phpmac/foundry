@@ -6,8 +6,6 @@ import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/acce
 /**
  * 简单合约
  *
- * 部署流程(可执行todo):
- * 1. 健康检查
  */
 contract Simple is AccessControlUpgradeable {
     bool public enable; // 是否启用

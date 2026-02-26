@@ -8,8 +8,6 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 /**
  * 简单代币
  *
- * 部署流程(可执行todo):
- * 1.测试功能检查,不能在主网部署
  */
 contract SimpleToken is ERC20Upgradeable, AccessControlUpgradeable {
     // 允许的测试网ID

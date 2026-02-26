@@ -1,3 +1,5 @@
 # TODO
 
-- agents 和 claude 需要更新到main分支
+- 发行一张nft 购买nft就是 购买算力 500u
+nft要支持转赠
+购买需要校验绑定邀请人

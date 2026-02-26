@@ -6,7 +6,6 @@ import {Simple} from "./Simple.sol";
 /**
  * 简单合约V2(升级版本示例)
  *
- * 部署流程:
  * 1. 部署新实现合约
  * 2. 通过 ProxyAdmin 调用 upgradeAndCall 升级
  */

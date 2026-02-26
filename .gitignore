@@ -11,3 +11,5 @@ out/
 .env
 
 /stc/contracts/
+
+*.bak
