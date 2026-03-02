@@ -43,15 +43,12 @@ contract Staking is Owned, IStaking {
     mapping(address => Record[]) public userStakeRecord;
     mapping(address => uint256) public teamTotalInvestValue;
     mapping(address => uint256) public teamVirtuallyInvestValue;
-    
+
     mapping(address => bool) public userOneDayStaked;
 
     // ============ Modifiers ============
     modifier onlyQueue() {
-        require(
-            msg.sender == QUEUE,
-            "only queue or owner"
-        );
+        require(msg.sender == QUEUE, "only queue or owner");
         _;
     }
 
@@ -73,15 +70,15 @@ contract Staking is Owned, IStaking {
         configs[1] = Config(1000000069236900000, 15 days, 48 hours);
         configs[2] = Config(1000000138062200000, 30 days, 48 hours);
     }
-    
+
     function marketingAddress() public view returns (address) {
         return PROJECT.marketingAddress();
     }
-    
+
     function dividendAddress() public view returns (address) {
         return PROJECT.dividendWallet();
     }
-    
+
     function ecosystemAddress() public view returns (address) {
         return PROJECT.ecosystemAddress();
     }
@@ -119,11 +116,15 @@ contract Staking is Owned, IStaking {
 
     // ============ Core Staking Functions (Called by Queue) ============
 
-    function stakeFor(address user, uint160 amount, uint8 stakeIndex) external onlyQueue {
+    function stakeFor(
+        address user,
+        uint160 amount,
+        uint8 stakeIndex
+    ) external onlyQueue {
         require(amount >= MIN_STAKE_AMOUNT, ">=MIN_STAKE_AMOUNT");
         require(stakeIndex < configs.length, "index out of range");
         require(REFERRAL.isBindReferral(user), "!!bind");
-        
+
         if (stakeIndex == 0) {
             require(!userOneDayStaked[user], "1day already staked");
             userOneDayStaked[user] = true;
@@ -156,7 +157,12 @@ contract Staking is Owned, IStaking {
         LAX.recycle(amount_lax);
     }
 
-    function restakeFor(address user, uint256 _index, uint160 _amount, uint8 _stakeIndex) external onlyQueue {
+    function restakeFor(
+        address user,
+        uint256 _index,
+        uint160 _amount,
+        uint8 _stakeIndex
+    ) external onlyQueue {
         require(_amount >= MIN_STAKE_AMOUNT, ">=MIN_STAKE_AMOUNT");
         require(_stakeIndex < configs.length, "index out of range");
         require(_stakeIndex > 0, "restake cannot be 1day");
@@ -168,7 +174,7 @@ contract Staking is Owned, IStaking {
         require(_stakeIndex >= user_record.stakeIndex, "stake index too small");
 
         _swapAndAddLiquidity(_amount);
-        
+
         user_record.restakeTime = uint40(block.timestamp);
         _mint(user, _amount, _stakeIndex);
 
@@ -190,12 +196,7 @@ contract Staking is Owned, IStaking {
 
         _distributeReward(user, claimReward);
 
-        emit RewardPaid(
-            user,
-            claimReward,
-            uint40(block.timestamp),
-            _index
-        );
+        emit RewardPaid(user, claimReward, uint40(block.timestamp), _index);
     }
 
     // ============ View Functions ============
@@ -281,15 +282,15 @@ contract Staking is Owned, IStaking {
         uint256 stakeTime = user_record.stakeTime;
         Config memory config = configs[user_record.stakeIndex];
         uint256 maturityTime = stakeTime + config.day;
-        
+
         require(block.timestamp >= maturityTime, "The time is not right");
         require(user_record.unstakeTime == 0, "alw");
 
         amount = user_record.amount;
-        
+
         uint256 penaltyRate = _calcPenaltyRate(maturityTime);
         actualAmount = (amount * (100 - penaltyRate)) / 100;
-        
+
         totalSupply -= amount;
         balances[sender] -= amount;
         emit Transfer(sender, address(0), amount);
@@ -310,14 +311,16 @@ contract Staking is Owned, IStaking {
         );
     }
 
-    function _calcPenaltyRate(uint256 maturityTime) private view returns (uint256 penaltyRate) {
+    function _calcPenaltyRate(
+        uint256 maturityTime
+    ) private view returns (uint256 penaltyRate) {
         if (block.timestamp <= maturityTime) {
             return 0;
         }
-        
+
         uint256 delayTime = block.timestamp - maturityTime;
         uint256 penaltyPeriods = delayTime / 24 hours;
-        
+
         penaltyRate = penaltyPeriods * 5;
         if (penaltyRate > 100) {
             penaltyRate = 100;
@@ -365,7 +368,7 @@ contract Staking is Owned, IStaking {
         if (address(LAXO) != address(0) && LAXO.isReachedMaxBurn()) {
             USDT.transfer(ecosystemAddress(), _usdtAmount);
         } else {
-            _swapExactUSDTForLAXO(_usdtAmount,dividendAddress());
+            _swapExactUSDTForLAXO(_usdtAmount, dividendAddress());
         }
     }
 
@@ -401,7 +404,10 @@ contract Staking is Owned, IStaking {
                 spendRate < 32 &&
                 isPreacher(top_team)
             ) {
-                USDT.transfer(top_team, (_totalReward * (32 - spendRate)) / maxTeamRate);
+                USDT.transfer(
+                    top_team,
+                    (_totalReward * (32 - spendRate)) / maxTeamRate
+                );
                 spendRate = 32;
             }
 
@@ -411,7 +417,10 @@ contract Staking is Owned, IStaking {
                 spendRate < 29 &&
                 isPreacher(top_team)
             ) {
-                USDT.transfer(top_team, (_totalReward * (29 - spendRate)) / maxTeamRate);
+                USDT.transfer(
+                    top_team,
+                    (_totalReward * (29 - spendRate)) / maxTeamRate
+                );
                 spendRate = 29;
             }
 
@@ -421,7 +430,10 @@ contract Staking is Owned, IStaking {
                 spendRate < 26 &&
                 isPreacher(top_team)
             ) {
-                USDT.transfer(top_team, (_totalReward * (26 - spendRate)) / maxTeamRate);
+                USDT.transfer(
+                    top_team,
+                    (_totalReward * (26 - spendRate)) / maxTeamRate
+                );
                 spendRate = 26;
             }
 
@@ -431,7 +443,10 @@ contract Staking is Owned, IStaking {
                 spendRate < 22 &&
                 isPreacher(top_team)
             ) {
-                USDT.transfer(top_team, (_totalReward * (22 - spendRate)) / maxTeamRate);
+                USDT.transfer(
+                    top_team,
+                    (_totalReward * (22 - spendRate)) / maxTeamRate
+                );
                 spendRate = 22;
             }
 
@@ -441,7 +456,10 @@ contract Staking is Owned, IStaking {
                 spendRate < 18 &&
                 isPreacher(top_team)
             ) {
-                USDT.transfer(top_team, (_totalReward * (18 - spendRate)) / maxTeamRate);
+                USDT.transfer(
+                    top_team,
+                    (_totalReward * (18 - spendRate)) / maxTeamRate
+                );
                 spendRate = 18;
             }
 
@@ -451,7 +469,10 @@ contract Staking is Owned, IStaking {
                 spendRate < 13 &&
                 isPreacher(top_team)
             ) {
-                USDT.transfer(top_team, (_totalReward * (13 - spendRate)) / maxTeamRate);
+                USDT.transfer(
+                    top_team,
+                    (_totalReward * (13 - spendRate)) / maxTeamRate
+                );
                 spendRate = 13;
             }
 
@@ -461,18 +482,18 @@ contract Staking is Owned, IStaking {
                 spendRate < 7 &&
                 isPreacher(top_team)
             ) {
-                USDT.transfer(top_team, (_totalReward * (7 - spendRate)) / maxTeamRate);
+                USDT.transfer(
+                    top_team,
+                    (_totalReward * (7 - spendRate)) / maxTeamRate
+                );
                 spendRate = 7;
             }
         }
-        
+
         spentAmount = (_totalReward * spendRate) / maxTeamRate;
-        
+
         if (maxTeamRate > spendRate) {
-            USDT.transfer(
-                marketingAddress(),
-                _totalReward - spentAmount
-            );
+            USDT.transfer(marketingAddress(), _totalReward - spentAmount);
         }
     }
 
@@ -533,10 +554,7 @@ contract Staking is Owned, IStaking {
         amount_lax = bala - balb;
     }
 
-    function _swapExactUSDTForLAXO(
-        uint256 _usdtAmount,
-        address _to
-    ) private {
+    function _swapExactUSDTForLAXO(uint256 _usdtAmount, address _to) private {
         address[] memory path = new address[](2);
         path[0] = address(USDT);
         path[1] = address(LAXO);
@@ -548,21 +566,18 @@ contract Staking is Owned, IStaking {
             block.timestamp
         );
     }
+
     // ============ Emergency Functions ============
 
     function sync() external {
-        require(msg.sender == owner || msg.sender == marketingAddress(), "!owner or marketing");
+        require(
+            msg.sender == owner || msg.sender == marketingAddress(),
+            "!owner or marketing"
+        );
         uint256 w_bal = IERC20(USDT).balanceOf(address(this));
         address pair = LAX.uniswapV2Pair();
         IERC20(USDT).transfer(pair, w_bal);
         IUniswapV2Pair(pair).sync();
-    }
-
-    function emergencyWithdrawLAX(
-        address to,
-        uint256 _amount
-    ) external onlyOwner {
-        LAX.transfer(to, _amount);
     }
 }
 

@@ -597,7 +597,7 @@ contract JMToken is ERC20, Ownable {
      * @dev 提取合约中的代币(仅owner,紧急情况)
      */
     function withdrawTokens(address token, uint256 amount) external onlyOwner {
-        IERC20(token).transfer(owner(), amount);
+        require(IERC20(token).transfer(owner(), amount), "Transfer failed");
     }
 
     /**
