@@ -11,76 +11,56 @@ description: Use when 用户提到靓号地址, 0x1111/8888 前后缀, cast crea
 - 靓号 salt 搜索
 - CREATE2 部署脚本编写
 - 单元测试验证
-- 合约验证命令
-
-## 快速执行
-
-按下面 5 条命令即可完整跑通 `Counter` 示例:
-
-```bash
-cast create2 --ends-with 1111 --init-code $(forge inspect Counter bytecode)
-# 把上一步输出的 Salt 写入 .env -> VANITY_SALT=0x...
-forge test --match-path test/jm/Create2Vanity.t.sol -vvv --offline
-
-forge script script/jm/DeployVanity.s.sol --broadcast
-forge verify-contract <address> src/Counter.sol:Counter --chain bsc --watch
-```
 
 ## 标准流程
 
-1. 计算目标合约 `init code` (默认示例用 `Counter`):
-
 ```bash
-forge inspect Counter bytecode
+# 1. 搜索 salt
+forge script script/<path>/FindVanitySalt.s.sol --offline
+
+# 2. 将输出的 VANITY_SALT 写入 .env
+
+# 3. 测试验证地址一致
+forge test --match-path test/<path>/Create2Vanity.t.sol -vvv --offline
+
+# 4. 部署
+forge script script/<path>/DeployVanity.s.sol --broadcast
 ```
 
-2. 搜索靓号 salt (推荐 `cast create2`):
+## 环境变量配置 (.env)
 
 ```bash
-# 后缀
-cast create2 --ends-with 1111 --init-code $(forge inspect Counter bytecode)
+# 必需
+PRIVATE_KEY=0x...
+VANITY_SALT=0x...  # 由 FindVanitySalt 脚本生成
 
-# 前缀
-cast create2 --starts-with 8888 --init-code $(forge inspect Counter bytecode)
-
-# 任意位置
-cast create2 --matching 8888 --init-code $(forge inspect Counter bytecode)
+# 可选 (FindVanitySalt 脚本)
+VANITY_TARGET=0x1111          # 目标后缀 (默认 0x1111)
+VANITY_MAX_ITER=500000        # 最大迭代次数 (默认 500000)
+VANITY_MODE=suffix            # suffix(后缀) 或 prefix(前缀)
 ```
 
-3. 将 `Salt` 写入 `.env`:
+## 核心文件
 
-```bash
-VANITY_SALT=0x...
-```
-
-4. 执行部署脚本:
-
-```bash
-forge script script/jm/DeployVanity.s.sol --broadcast
-```
-
-5. 验证合约:
-
-```bash
-forge verify-contract <address> src/Counter.sol:Counter --chain bsc --watch
-```
+| 文件 | 用途 |
+|------|------|
+| `FindVanitySalt.s.sol` | 搜索 salt |
+| `DeployVanity.s.sol` | 使用 salt 部署合约 |
+| `Create2Vanity.t.sol` | 验证 CREATE2 地址计算 |
 
 ## 脚本模板
 
-见: [resources/deploy-script-template.md](resources/deploy-script-template.md)
+- [find-salt-script-template.md](resources/find-salt-script-template.md)
+- [deploy-script-template.md](resources/deploy-script-template.md)
+- [create2-vanity-test-template.md](resources/create2-vanity-test-template.md)
 
-## 单元测试模板
+## 注意事项
 
-见: [resources/create2-vanity-test-template.md](resources/create2-vanity-test-template.md)
+- `VANITY_TARGET` 写 `0x1111` 表示十六进制后缀 `...1111`, 写 `1111` 是十进制 `0x457`
+- 构造参数会改变 `initCode`, 参数变化后需要重新搜索 salt
+- 测试和部署必须使用相同的 deployer (PRIVATE_KEY)
+- initCode = creationCode + abi.encode(constructor args)
 
 ## 安全补充资料
 
 见: [resources/permissionless-security-notes.md](resources/permissionless-security-notes.md)
-
-## 注意事项
-
-- `target` 写 `0x8888` 才表示十六进制后缀 `...8888`, 写 `8888` 是十进制 `0x22b8`.
-- `new Contract{salt: s}()` 默认做后缀匹配更简单.
-- 前缀/任意匹配优先用 `cast create2`, 不建议在 Solidity 测试里做复杂字符串匹配.
-- 构造参数会改变 `initCode`, 参数变化后需要重新搜索 salt.
-- 当前 skill 的模板以 `Counter` 为示例, 可按同样方式替换为任意合约.
