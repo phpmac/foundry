@@ -10,6 +10,12 @@ import "./interfaces/ITaxDistributor.sol";
 /**
  * @title MC Token
  * @dev 带交易税收和白名单功能的ERC20代币
+ *
+ * @notice 设计说明:
+ * - 卖出税仅对已注册的交易对生效 (通过 isPair mapping 判断)
+ * - 只有 owner 调用 setPair() 注册的交易对才会被征税
+ * - 未注册的交易对不会被收税, 这是预期行为
+ * - 如需在新交易对上收税, owner 需手动调用 setPair(newPair, true)
  */
 contract MC is ERC20, Ownable {
     // ========== 状态变量 ==========
