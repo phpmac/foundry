@@ -42,11 +42,6 @@ contract DeployJM is Script {
         // 3. 配置合约关联
         jmToken.setLPDistributor(address(lpDistributor));
 
-        // 4. 将代币转入合约用于私募和燃烧
-        uint256 privateSaleTotal = 2000 * 6000 ether; // 1200万枚
-        uint256 burnTotal = 5_000_000 ether; // 500万枚
-        jmToken.transfer(address(jmToken), privateSaleTotal + burnTotal);
-
         console.log(unicode"部署完成!");
         console.log("JMToken:", address(jmToken));
         console.log("JMB Voucher is built in LPDistributor");

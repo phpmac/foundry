@@ -2,51 +2,41 @@
 pragma solidity ^0.8.20;
 
 import "forge-std/Test.sol";
-import "../../src/Counter.sol";
+import "../../src/jm/JMToken.sol";
 
 /**
  * @title Create2VanityTest
- * @dev 验证 CREATE2 靓号部署: 搜索 salt -> 部署 -> 确认地址后缀
+ * @dev 验证 CREATE2 地址计算和部署一致性
  *
- * 运行: forge test --match-path test/jm/Create2Vanity.t.sol -vvv --offline
+ * 查找 salt 请使用: forge script script/jm/FindVanitySalt.s.sol --offline
  */
 contract Create2VanityTest is Test {
-    function testVanityDeploy() public {
-        bytes32 initCodeHash = keccak256(type(Counter).creationCode);
-        address deployer = address(this);
-        // 目标片段 (十六进制), 例如 0x8888 表示 "8888"
-        uint256 target = 0x8888;
+    function testCreate2AddressConsistency() public {
+        address pancakeRouter = vm.envAddress("PANCAKE_ROUTER");
+        bytes32 salt = vm.envBytes32("VANITY_SALT"); // 从 .env 读取 FindVanitySalt 找到的 salt
+        uint256 deployerKey = vm.envUint("PRIVATE_KEY");
+        address deployer = vm.addr(deployerKey);
 
-        // 1. 搜索 salt
-        bytes32 salt;
-        address predicted;
-        for (uint256 i = 0; i < 500000; i++) {
-            predicted = _computeAddr(deployer, bytes32(i), initCodeHash);
-            // 默认: 匹配后缀 (地址结尾), 取最后 16 bit
-            bool isMatch = (uint160(predicted) & 0xFFFF) == target;
+        // initCode = creationCode + encoded constructor args
+        bytes memory initCode = abi.encodePacked(
+            type(JMToken).creationCode,
+            abi.encode(pancakeRouter)
+        );
+        bytes32 initCodeHash = keccak256(initCode);
 
-            // 前缀匹配示例: 把上面一行替换成下面这一行
-            // bool isMatch = (uint160(predicted) >> 144) == target;
+        // 计算预期地址
+        address predicted = _computeAddr(deployer, salt, initCodeHash);
 
-            if (isMatch) {
-                salt = bytes32(i);
-                break;
-            }
-        }
-        require(predicted != address(0), unicode"未找到 salt");
+        // 使用 vm.prank 模拟从 deployer 地址部署
+        vm.prank(deployer);
+        JMToken c = new JMToken{salt: salt}(pancakeRouter);
 
-        // 2. 部署
-        Counter c = new Counter{salt: salt}();
+        // 验证地址一致
+        assertEq(address(c), predicted, unicode"CREATE2 地址不一致");
 
-        // 3. 验证
-        assertEq(address(c), predicted);
-        // 默认验证后缀
-        assertEq(uint160(address(c)) & 0xFFFF, target);
-        // 前缀验证示例:
-        // assertEq(uint160(address(c)) >> 144, target);
-
-        console.log(unicode"靓号地址:", address(c));
         console.log(unicode"Salt:", uint256(salt));
+        console.log(unicode"预测地址:", predicted);
+        console.log(unicode"实际地址:", address(c));
     }
 
     function _computeAddr(
