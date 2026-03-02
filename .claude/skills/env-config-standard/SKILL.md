@@ -1,6 +1,6 @@
 ---
 name: env-config-standard
-description: 统一 Foundry 项目的环境变量和配置文件规范, 将 RPC 与区块浏览器验证配置从命令行参数迁移到 foundry.toml + .env. 当用户提到 source .env 很麻烦, 不想手动传 --rpc-url/--private-key/--etherscan-api-key, 或要统一部署与验证命令时使用.
+description: Use when 用户提到 source .env 很麻烦, 不想手动传 --rpc-url/--private-key/--etherscan-api-key, 或要统一部署与验证命令
 ---
 
 # 环境变量配置规范

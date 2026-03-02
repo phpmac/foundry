@@ -1,6 +1,6 @@
 ---
 name: foundry-dev
-description: Foundry智能合约开发指导,包括编译/测试/部署/调试。
+description: Use when 用户提到 forge/foundry/编译/测试/部署智能合约
 ---
 
 # Foundry开发指南
