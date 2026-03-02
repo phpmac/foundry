@@ -1,53 +1,40 @@
 # CREATE2 单元测试模板
 
-用于验证: 搜索 salt -> 部署 -> 校验后缀.
+用于验证: 从 .env 读取 salt -> 部署 -> 校验地址一致.
+
+关键点:
+- 使用 `vm.prank(deployer)` 确保与实际部署者一致
+- initCode 必须包含构造函数参数
 
 ```solidity
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+// initCode = creationCode + encoded constructor args
+bytes memory initCode = abi.encodePacked(
+    type(YourContract).creationCode,
+    abi.encode(constructorArg1, constructorArg2)
+);
+bytes32 initCodeHash = keccak256(initCode);
 
-import "forge-std/Test.sol";
-import "../../src/Counter.sol";
+// 计算预期地址
+address predicted = _computeAddr(deployer, salt, initCodeHash);
 
-contract Create2VanityTest is Test {
-    function testVanityDeploy() public {
-        bytes32 initCodeHash = keccak256(type(Counter).creationCode);
-        address deployer = address(this);
-        uint256 target = 0x1111; // 目标后缀
+// 使用 vm.prank 模拟从 deployer 地址部署
+vm.prank(deployer);
+YourContract c = new YourContract{salt: salt}(constructorArg1, constructorArg2);
 
-        bytes32 salt;
-        address predicted;
-        for (uint256 i = 0; i < 500000; i++) {
-            predicted = _computeAddr(deployer, bytes32(i), initCodeHash);
-            bool isMatch = (uint160(predicted) & 0xFFFF) == target; // 后缀匹配
-            if (isMatch) {
-                salt = bytes32(i);
-                break;
-            }
-        }
+// 验证
+assertEq(address(c), predicted);
+```
 
-        require(predicted != address(0), unicode"未找到 salt");
-        Counter c = new Counter{salt: salt}();
+## CREATE2 地址计算
 
-        assertEq(address(c), predicted);
-        assertEq(uint160(address(c)) & 0xFFFF, target);
-    }
-
-    function _computeAddr(address d, bytes32 s, bytes32 h) internal pure returns (address) {
-        return address(uint160(uint256(keccak256(abi.encodePacked(hex"ff", d, s, h)))));
-    }
+```solidity
+function _computeAddr(address d, bytes32 s, bytes32 h) internal pure returns (address) {
+    return address(uint160(uint256(keccak256(abi.encodePacked(hex"ff", d, s, h)))));
 }
 ```
 
-执行:
+## 执行
 
 ```bash
-forge test --match-path test/jm/Create2Vanity.t.sol -vvv --offline
-```
-
-前缀或任意匹配建议用命令:
-
-```bash
-cast create2 --starts-with 1111 --init-code $(forge inspect Counter bytecode)
-cast create2 --matching 8888 --init-code $(forge inspect Counter bytecode)
+forge test --match-path test/<path>/Create2Vanity.t.sol -vvv --offline
 ```
