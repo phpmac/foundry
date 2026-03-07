@@ -1,0 +1,49 @@
+{
+  "transactions": [
+    {
+      "hash": "0x062d6d62278e7de02bbfbf4ad756ae1049176dd181931f220fc054c05249aaed",
+      "transactionType": "CALL",
+      "contractName": null,
+      "contractAddress": "0x61cefc14ef104f149bf7c80451685f88be7c14d2",
+      "function": "setWithdrawalSignAddress(address)",
+      "arguments": [
+        "0x916c00A476e177ED9b6955DD1DC5B5Ef027BA672"
+      ],
+      "transaction": {
+        "from": "0x130151afa86cd285223f95bbc1e5aa99eef8b7f2",
+        "to": "0x61cefc14ef104f149bf7c80451685f88be7c14d2",
+        "gas": "0xbab5",
+        "value": "0x0",
+        "input": "0x1c05318e000000000000000000000000916c00a476e177ed9b6955dd1dc5b5ef027ba672",
+        "nonce": "0x1e3c",
+        "chainId": "0x38"
+      },
+      "additionalContracts": [],
+      "isFixedGasLimit": false
+    }
+  ],
+  "receipts": [
+    {
+      "status": "0x1",
+      "cumulativeGasUsed": "0x92ec09",
+      "logs": [],
+      "logsBloom": "0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "type": "0x2",
+      "transactionHash": "0x062d6d62278e7de02bbfbf4ad756ae1049176dd181931f220fc054c05249aaed",
+      "transactionIndex": "0x49",
+      "blockHash": "0x903bcb2ce9bb26c591110541990e3cc281775daf8831ce40cb382e57f6cbe1bf",
+      "blockNumber": "0x5133e7c",
+      "gasUsed": "0x872d",
+      "effectiveGasPrice": "0x2faf080",
+      "from": "0x130151afa86cd285223f95bbc1e5aa99eef8b7f2",
+      "to": "0x61cefc14ef104f149bf7c80451685f88be7c14d2",
+      "contractAddress": null
+    }
+  ],
+  "libraries": [],
+  "pending": [],
+  "returns": {},
+  "timestamp": 1772862391943,
+  "chain": 56,
+  "commit": "327c920"
+}
