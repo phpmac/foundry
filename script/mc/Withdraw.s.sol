@@ -93,4 +93,36 @@ contract WithdrawScript is Script {
 
         vm.stopBroadcast();
     }
+
+    /**
+     * 设置签名地址
+     * forge script script/mc/Withdraw.s.sol --sig "setSignAddress()" --broadcast
+     */
+    function setSignAddress() external {
+        uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
+        address proxyAddress = vm.envAddress("WITHDRAW_PROXY_ADDRESS");
+        address signAddress = vm.envAddress("WITHDRAW_SIGN_ADDRESS");
+
+        require(
+            proxyAddress != address(0),
+            unicode"WITHDRAW_PROXY_ADDRESS 未设置"
+        );
+        require(
+            signAddress != address(0),
+            unicode"WITHDRAW_SIGN_ADDRESS 未设置"
+        );
+
+        Withdraw w = Withdraw(proxyAddress);
+
+        // 检查当前值, 避免重复交易
+        if (w.withdrawalSignAddress() == signAddress) {
+            console.log(unicode"签名地址已设置, 无需重复设置:", signAddress);
+            return;
+        }
+
+        vm.startBroadcast(deployerPrivateKey);
+        w.setWithdrawalSignAddress(signAddress);
+        console.log(unicode"已设置签名地址:", signAddress);
+        vm.stopBroadcast();
+    }
 }
